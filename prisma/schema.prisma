@@ -10,15 +10,30 @@ datasource db {
   url      = "file:../db/pixiv.db"
 }
 
+model scrapeProgress {
+  category   String @id
+  newestDate String
+}
+
 model PixivArticle {
-  tag_name         String @id
-  summary          String
-  updated_at       String
-  main_illst_url   String
-  view_count       Int
-  illust_count     Int
-  check_count      Int
-  related_tags     String
-  parent           String
-  lastScraped      String
+  tag_name                   String              @id
+  summary                    String
+  updated_at                 String
+  main_illst_url             String
+  view_count                 Int
+  illust_count               Int
+  check_count                Int
+  related_tags               String
+  parent                     String
+  lastScraped                String
+  scrapedArticleData         ScrapedArticleData? @relation(fields: [scrapedArticleDataTag_name], references: [tag_name])
+  scrapedArticleDataTag_name String?
+}
+
+model ScrapedArticleData {
+  tag_name     String         @id
+  reading      String
+  header       String
+  lastScraped  String
+  PixivArticle PixivArticle[]
 }
