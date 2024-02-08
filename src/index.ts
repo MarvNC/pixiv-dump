@@ -37,8 +37,11 @@ function convertToPixivArticle(rawArticle: RawArticle): PixivArticle {
     view_count: rawArticle.view_count,
     illust_count: rawArticle.illust_count,
     check_count: rawArticle.check_count,
-    related_tags: rawArticle.related_tags.join(','),
+    related_tags: JSON.stringify(rawArticle.related_tags),
     parent: rawArticle.parent,
     lastScraped: Date.now().toString(),
+    reading: null,
+    header: null,
+    lastScrapedReading: null,
   };
 }
