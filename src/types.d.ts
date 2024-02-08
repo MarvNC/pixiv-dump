@@ -5,6 +5,9 @@ type Article = {
   main_illst_url: string;
   view_count: number;
   illust_count: number;
+  /**
+   * チェックリスト数
+   */
   check_count: number;
   related_tags: string[];
   parent: string;

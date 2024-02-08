@@ -1,17 +1,15 @@
-import axios from 'axios';
-import axiosRetry from 'axios-retry';
+import { fetchURL } from './fetchURL';
+import { PIXIV_BASE_URL } from '../constants';
 
-const pixivBaseURL = 'https://dic.pixiv.net/';
 const pixivPage = (category: string, page: number) =>
-  `${pixivBaseURL}${category ? 'category/' + category : ''}?json=1&page=${page}`;
+  `${PIXIV_BASE_URL}${category ? 'category/' + category : ''}?json=1&page=${page}`;
 
 async function fetchPixivPage(
   category: string,
   page: number,
 ): Promise<PixivPage> {
-  axiosRetry(axios, { retries: 3, retryDelay: axiosRetry.exponentialDelay });
   const url = pixivPage(category, page);
-  const response = await axios.get(url);
+  const response = await fetchURL(url);
   return response.data;
 }
 
