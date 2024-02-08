@@ -1,0 +1,24 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./pixiv.db"
+}
+
+model PixivArticle {
+  tag_name         String @id
+  summary          String
+  updated_at       String
+  main_illst_url   String
+  view_count       Int
+  illust_count     Int
+  check_count      Int
+  related_tags     String
+  parent           String
+  lastScraped      String
+}

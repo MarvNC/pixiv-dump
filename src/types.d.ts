@@ -1,4 +1,4 @@
-type Article = {
+type RawArticle = {
   summary: string;
   updated_at: string;
   tag_name: string;
@@ -16,7 +16,7 @@ type Article = {
 /**
  * Represents a Pixiv page.
  */
-type PixivPage = {
+type PixivPageResponse = {
   meta: {
     /**
      * Total number of articles in the category.
@@ -31,5 +31,5 @@ type PixivPage = {
      */
     page: number;
   };
-  articles: Article[];
+  articles: RawArticle[];
 };

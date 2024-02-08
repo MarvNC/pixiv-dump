@@ -7,7 +7,7 @@ const pixivPage = (category: string, page: number) =>
 async function fetchPixivPage(
   category: string,
   page: number,
-): Promise<PixivPage> {
+): Promise<PixivPageResponse> {
   const url = pixivPage(category, page);
   const response = await fetchURL(url);
   return response.data;
