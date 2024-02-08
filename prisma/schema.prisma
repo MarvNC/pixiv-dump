@@ -26,8 +26,6 @@ model PixivArticle {
   related_tags               String
   parent                     String
   lastScraped                String
-  scrapedArticleData         ScrapedArticleData? @relation(fields: [scrapedArticleDataTag_name], references: [tag_name])
-  scrapedArticleDataTag_name String?
 }
 
 model ScrapedArticleData {
@@ -35,5 +33,4 @@ model ScrapedArticleData {
   reading      String
   header       String
   lastScraped  String
-  PixivArticle PixivArticle[]
 }
