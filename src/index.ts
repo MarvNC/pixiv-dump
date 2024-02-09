@@ -11,6 +11,9 @@ export const prisma = new PrismaClient();
     console.log(`Scraping ${category} from ${newestScrapedDate}`);
     await scrapePixivCategory(category, newestScrapedDate);
   }
+  console.log('Scraping of article summaries complete');
+  const totalArticles = await prisma.pixivArticle.count();
+  console.log(`Total articles: ${totalArticles}`);
 })()
   .then(async () => {
     await prisma.$disconnect();
