@@ -16,7 +16,7 @@ jobs:
         id: get_run_id
         run: |
           RUN_ID=$(curl --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/continuousScrape.yml/runs" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/continuousScrape.yaml/runs" \
             | jq '.workflow_runs[1].id')
           echo "Previous run ID: $RUN_ID"
           echo "::set-output name=run_id::$RUN_ID"
