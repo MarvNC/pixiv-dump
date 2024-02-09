@@ -12,14 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: npm ci
-
       - name: Get previous run ID
         id: get_run_id
         run: |
           RUN_ID=$(curl --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}.yml/runs" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/continuousScrape.yml/runs" \
             | jq '.workflow_runs[1].id')
           echo "::set-output name=run_id::$RUN_ID"
 
@@ -33,6 +30,9 @@ jobs:
           # Previous run ID
           run-id: ${{ steps.get_previous_run_id.outputs.run_id }}
         continue-on-error: true
+
+      - name: Install Dependencies
+        run: npm ci
 
       - name: Create db/pixiv.db if it doesn't exist
         run: |
