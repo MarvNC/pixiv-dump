@@ -1,9 +1,9 @@
 # Pixiv Encyclopedia Dump
 
 This repository contains dumps of the
-[Pixiv Encyclopedia](https://dic.pixiv.net/), a collection of articles on
-various topics, including anime, manga, and games. The articles are written by
-users and are available in Japanese.
+[Pixiv Encyclopedia](https://dic.pixiv.net/) (ピクシブ百科事典), a collection of
+articles on various topics, including anime, manga, and games. The articles are
+written by users and are available in Japanese.
 
 ## Download
 
