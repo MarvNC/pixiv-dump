@@ -29,7 +29,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           # Previous run ID
-          run-id: ${{ steps.get_previous_run_id.outputs.run_id }}
+          run-id: ${{ steps.get_run_id.outputs.run_id }}
         continue-on-error: true
 
       - name: Install Dependencies
