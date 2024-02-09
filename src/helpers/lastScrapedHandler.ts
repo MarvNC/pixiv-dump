@@ -19,3 +19,17 @@ export async function getCategoryLastScraped(
   }
   return scrapeProgress.newestDate;
 }
+
+/**
+ * Updates the last scraped date for a category.
+ */
+export async function updateCategoryLastScraped(
+  category: string,
+  newestDate: string,
+) {
+  await prisma.scrapeProgress.upsert({
+    where: { category },
+    update: { newestDate },
+    create: { category, newestDate },
+  });
+}
