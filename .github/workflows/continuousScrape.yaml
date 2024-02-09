@@ -1,0 +1,53 @@
+name: Scrape All
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Get Previous Run ID
+        id: get_previous_run_id
+        run: echo "::set-output name=run_id::$((${{ github.run_id }} - 1))"
+
+      - name: Download Artifacts from Last Workflow
+        uses: actions/download-artifact@v4
+        with:
+          name: db
+          path: db/*
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          # Previous run ID
+          run-id: ${{ steps.get_previous_run_id.outputs.run_id }}
+        continue-on-error: true
+
+      - name: Create db/pixiv.db if it doesn't exist
+        run: |
+          if [ ! -f db/pixiv.db ]; then
+            npx prisma migrate dev
+          fi
+
+      - name: Set up DB
+        run: npm run migrate
+
+      - name: Build
+        run: npm run build
+
+      - name: Scrape
+        # 5.9 hours
+        run: node . --timeout=21240000
+
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: db
+          path: db/*
