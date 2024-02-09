@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-release:
+  scrape:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,7 +25,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: db
-          path: db/*
+          path: db
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
           # Previous run ID
