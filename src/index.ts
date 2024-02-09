@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
+import fs from 'fs';
 import { PIXIV_CATEGORIES } from './constants';
 import { getCategoryLastScraped } from './helpers/lastScrapedHandler';
 import { scrapePixivCategory } from './scrape/scrapePixivCategory';
@@ -20,19 +21,21 @@ export const prisma = new PrismaClient();
     console.log(`Timeout set to ${timeout} milliseconds`);
     setTimeout(async () => {
       console.log('Timeout reached. Exiting program');
-      await prisma.$disconnect();
+      exitHandler();
       process.exit(0);
     }, timeout);
   }
 
   scrapeAll()
-    .then(async () => {
-      await prisma.$disconnect();
+    .then(async (totalArticles) => {
+      exitHandler({
+        completedScraping: true,
+        totalArticles,
+      });
     })
     .catch(async (e) => {
       console.error(e);
-      await prisma.$disconnect();
-      process.exit(1);
+      exitHandler({ code: 1 });
     });
 })();
 
@@ -52,12 +55,36 @@ async function scrapeAll() {
     where: { lastScrapedReading: { not: null } },
   });
   console.log(`Total articles scraped: ${totalArticlesWithReading}`);
+
+  return totalArticles;
 }
 
 process.on('SIGINT', async () => {
   console.log(
     'Received SIGINT signal. Disconnecting Prisma and exiting program',
   );
-  await prisma.$disconnect();
-  process.exit(0);
+  exitHandler();
 });
+
+/**
+ * Disconnect Prisma and exit the program
+ * @param code Exit code
+ */
+function exitHandler({
+  code = 0,
+  completedScraping = false,
+  totalArticles = 0,
+}: {
+  code?: number;
+  completedScraping?: boolean;
+  totalArticles?: number;
+} = {}) {
+  console.log('Exiting program');
+  prisma.$disconnect();
+  if (completedScraping) {
+    console.log(`Scraped ${totalArticles} articles`);
+    // Write to total.txt
+    fs.writeFileSync('total.txt', totalArticles.toString());
+  }
+  process.exit(code);
+}
