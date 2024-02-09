@@ -14,5 +14,23 @@ users and are available in Japanese.
 
 ## Format
 
-The dumps are available as sqlite3 databases. The schema can be found in the
-[schema.prisma](./prisma/schema.prisma) file.
+The dumps are available as sqlite3 databases. The detailed schema can be found
+in the [schema.prisma](./prisma/schema.prisma) file.
+
+```prisma
+model PixivArticle {
+  tag_name           String  @id
+  summary            String
+  updated_at         String
+  main_illst_url     String
+  view_count         Int
+  illust_count       Int
+  check_count        Int
+  related_tags       String
+  parent             String?
+  lastScraped        String
+  reading            String?
+  header             String?
+  lastScrapedReading String?
+}
+```
