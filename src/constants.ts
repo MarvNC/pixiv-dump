@@ -15,3 +15,4 @@ export const PIXIV_CATEGORIES = [
   'イベント',
   '同人サークル',
 ];
+export const DEFAULT_LAST_SCRAPED = '0000-00-00 00:00:00';

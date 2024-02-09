@@ -1,20 +1,25 @@
 import fetchPixivPage from './fetch/fetchPixivPage';
 import { PixivArticle, PrismaClient } from '@prisma/client';
+import { DEFAULT_LAST_SCRAPED, PIXIV_CATEGORIES } from './constants';
 
 const prisma = new PrismaClient();
 
 (async () => {
-  const data = await fetchPixivPage('', 1);
-  for (const article of data.articles) {
-    await prisma.pixivArticle.upsert({
-      where: { tag_name: article.tag_name },
-      update: convertToPixivArticle(article),
-      create: convertToPixivArticle(article),
-    });
+  for (const category of PIXIV_CATEGORIES) {
+    const newestScrapedDate = await getCategoryLastScraped(category);
+    console.log(`Scraping ${category} from ${newestScrapedDate}`);
   }
+  // const data = await fetchPixivPage('', 1);
+  // for (const article of data.articles) {
+  //   await prisma.pixivArticle.upsert({
+  //     where: { tag_name: article.tag_name },
+  //     update: convertToPixivArticle(article),
+  //     create: convertToPixivArticle(article),
+  //   });
+  // }
 
-  const articles = await prisma.pixivArticle.findMany();
-  console.log(articles);
+  // const articles = await prisma.pixivArticle.findMany();
+  // console.log(articles);
 })()
   .then(async () => {
     await prisma.$disconnect();
@@ -24,6 +29,23 @@ const prisma = new PrismaClient();
     await prisma.$disconnect();
     process.exit(1);
   });
+
+/**
+ * Scrapes a category of articles from Pixiv.
+ */
+async function getCategoryLastScraped(category: string): Promise<string> {
+  // Check how far the category has been scraped
+  const scrapeProgress = await prisma.scrapeProgress.findUnique({
+    where: { category },
+  });
+  if (!scrapeProgress) {
+    await prisma.scrapeProgress.create({
+      data: { category, newestDate: DEFAULT_LAST_SCRAPED },
+    });
+    return DEFAULT_LAST_SCRAPED;
+  }
+  return scrapeProgress.newestDate;
+}
 
 /**
  * Converts a raw article object to a PixivArticle object.
