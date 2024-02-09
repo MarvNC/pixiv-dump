@@ -15,9 +15,13 @@ jobs:
       - name: Install Dependencies
         run: npm ci
 
-      - name: Get Previous Run ID
-        id: get_previous_run_id
-        run: echo "::set-output name=run_id::$((${{ github.run_id }} - 1))"
+      - name: Get previous run ID
+        id: get_run_id
+        run: |
+          RUN_ID=$(curl --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${{ github.workflow }}.yml/runs" \
+            | jq '.workflow_runs[1].id')
+          echo "::set-output name=run_id::$RUN_ID"
 
       - name: Download Artifacts from Last Workflow
         uses: actions/download-artifact@v4
