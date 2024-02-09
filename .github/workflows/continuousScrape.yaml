@@ -51,8 +51,24 @@ jobs:
         # 5.9 hours
         run: node . --timeout=21240000
 
-      - name: Upload Artifacts
+      - name: Upload DB
         uses: actions/upload-artifact@v4
         with:
           name: db
           path: db/*
+
+      - name: Check if total.txt exists
+        id: check_file
+        run: |
+          if [[ -f total.txt ]]; then
+            echo "::set-output name=exists::true"
+          else
+            echo "::set-output name=exists::false"
+          fi
+
+      - name: Upload total.txt if it exists
+        if: steps.check_file.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: total
+          path: total.txt
