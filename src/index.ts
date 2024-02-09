@@ -1,13 +1,15 @@
 import fetchPixivPage from './fetch/fetchPixivPage';
 import { PixivArticle, PrismaClient } from '@prisma/client';
-import { DEFAULT_LAST_SCRAPED, PIXIV_CATEGORIES } from './constants';
+import { PIXIV_CATEGORIES } from './constants';
+import { getCategoryLastScraped } from './helpers/getCategoryLastScraped';
 
-const prisma = new PrismaClient();
+export const prisma = new PrismaClient();
 
 (async () => {
   for (const category of PIXIV_CATEGORIES) {
     const newestScrapedDate = await getCategoryLastScraped(category);
     console.log(`Scraping ${category} from ${newestScrapedDate}`);
+    await scrapePixivCategory(category, newestScrapedDate);
   }
   // const data = await fetchPixivPage('', 1);
   // for (const article of data.articles) {
@@ -30,21 +32,37 @@ const prisma = new PrismaClient();
     process.exit(1);
   });
 
+async function scrapePixivCategory(category: string, lastScraped: string) {
+  const pageNumberToStartAt = await findPageNumberAtDate(category, lastScraped);
+  console.log(`${category}:Starting at page ${pageNumberToStartAt}`);
+}
+
 /**
- * Scrapes a category of articles from Pixiv.
+ * Finds the page number in a category to start scraping
+ * from based on the last scraped date.
+ * Binary search to find the page number.
  */
-async function getCategoryLastScraped(category: string): Promise<string> {
-  // Check how far the category has been scraped
-  const scrapeProgress = await prisma.scrapeProgress.findUnique({
-    where: { category },
-  });
-  if (!scrapeProgress) {
-    await prisma.scrapeProgress.create({
-      data: { category, newestDate: DEFAULT_LAST_SCRAPED },
-    });
-    return DEFAULT_LAST_SCRAPED;
+async function findPageNumberAtDate(category: string, lastScraped: string) {
+  const firstPageData = await fetchPixivPage(category, 1);
+  const totalPageCount = Math.ceil(
+    firstPageData.meta.all_count / firstPageData.meta.count,
+  );
+  let left = 1;
+  let right = totalPageCount;
+  while (left < right) {
+    const mid = Math.floor((left + right) / 2);
+    const midPageData = await fetchPixivPage(category, mid);
+    const midPageDate = new Date(midPageData.articles[0].updated_at);
+    if (midPageDate > new Date(lastScraped)) {
+      right = mid;
+    } else {
+      left = mid + 1;
+    }
+    console.log(
+      `Searching for ${lastScraped} in ${category}: ${left} ${right}`,
+    );
   }
-  return scrapeProgress.newestDate;
+  return Math.max(left, right);
 }
 
 /**
