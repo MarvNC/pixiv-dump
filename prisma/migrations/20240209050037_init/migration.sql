@@ -14,7 +14,7 @@ CREATE TABLE "PixivArticle" (
     "illust_count" INTEGER NOT NULL,
     "check_count" INTEGER NOT NULL,
     "related_tags" TEXT NOT NULL,
-    "parent" TEXT NOT NULL,
+    "parent" TEXT,
     "lastScraped" TEXT NOT NULL,
     "reading" TEXT,
     "header" TEXT,
