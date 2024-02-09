@@ -58,7 +58,9 @@ async function scrapeArticleList(category: string, pageNumber: number) {
       create: convertToPixivArticle(article),
     });
   }
-  updateCategoryLastScraped(category, data.articles[0].updated_at);
+  if (data.articles.length > 0) {
+    updateCategoryLastScraped(category, data.articles[0].updated_at);
+  }
 }
 
 /**
