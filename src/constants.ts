@@ -16,3 +16,4 @@ export const PIXIV_CATEGORIES = [
   '同人サークル',
 ];
 export const DEFAULT_LAST_SCRAPED = '0000-00-00 00:00:00';
+export const FETCH_DELAY_MS = 1000;
