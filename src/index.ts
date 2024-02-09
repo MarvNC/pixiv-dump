@@ -5,7 +5,7 @@ import fs from 'fs';
 import { PIXIV_CATEGORIES } from './constants';
 import { getCategoryLastScraped } from './helpers/lastScrapedHandler';
 import { scrapePixivCategory } from './scrape/scrapePixivCategory';
-import { scrapeAllReadings } from './scrapeAllReadings';
+import { scrapeAllReadings } from './scrape/scrapeAllReadings';
 
 export const prisma = new PrismaClient();
 

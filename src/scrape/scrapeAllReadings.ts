@@ -1,8 +1,8 @@
 import cliProgress from 'cli-progress';
 import { JSDOM } from 'jsdom';
-import { PIXIV_BASE_URL } from './constants';
-import { fetchURL } from './fetch/fetchURL';
-import { prisma } from '.';
+import { PIXIV_BASE_URL } from '../constants';
+import { fetchURL } from '../fetch/fetchURL';
+import { prisma } from '..';
 
 const pixivArticleURL = (tag_name: string) =>
   `${PIXIV_BASE_URL}a/${encodeURIComponent(tag_name)}`;
