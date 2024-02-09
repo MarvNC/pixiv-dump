@@ -10,7 +10,23 @@ async function fetchPixivPage(
 ): Promise<PixivPageResponse> {
   const url = pixivPage(category, page);
   const response = await fetchURL(url);
+
+  if (!isPixivPageResponse(response.data)) {
+    throw new Error('Invalid response type');
+  }
+
   return response.data;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function isPixivPageResponse(data: any): data is PixivPageResponse {
+  return (
+    data.meta &&
+    data.meta.all_count &&
+    data.meta.count &&
+    data.meta.page &&
+    data.articles
+  );
 }
 
 export default fetchPixivPage;
