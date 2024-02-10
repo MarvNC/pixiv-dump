@@ -2,7 +2,7 @@ name: Scrape All
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 * * * *'
   workflow_dispatch:
 
 jobs:
@@ -48,8 +48,7 @@ jobs:
         run: npm run build
 
       - name: Scrape
-        # 5.9 hours
-        run: node . --timeout=21240000
+        run: node . --timeout=5000
 
       - name: Upload DB
         uses: actions/upload-artifact@v4
@@ -76,11 +75,11 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs: scrape
-    if: ${{ needs.scrape.outputs.completed == 'true' }}
+    # if: ${{ needs.scrape.outputs.completed == 'true' }}
     steps:
       - name: Get Current Date
         id: date
-        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
+        run: echo "::set-output name=date::$(date +'%Y-%m-%d-%H:%M')"
 
       - name: Download DB
         uses: actions/download-artifact@v4
@@ -97,13 +96,27 @@ jobs:
           path: total
           github-token: ${{ secrets.GITHUB_TOKEN }}
           repository: ${{ github.repository }}
+        continue-on-error: true
 
       - name: Read Total Count from total.txt
         id: read_total
         run: |
-          TOTAL=$(cat total/total.txt)
+          if [[ -f total/total.txt ]]; then
+            TOTAL=$(cat total/total.txt)
+          else
+            TOTAL=''
+          fi
           echo "Total: $TOTAL"
           echo "::set-output name=total::$TOTAL"
+
+      - name: Set release body
+        id: set_body
+        run: |
+          if [[ "${{ steps.read_total.outputs.total }}" != "" ]]; then
+            echo "::set-output name=body::Total entries in DB: ${{ steps.read_total.outputs.total }}"
+          else
+            echo "::set-output name=body::Scraping of readings is still in progress; many entries in this release may be missing readings."
+          fi
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
@@ -111,7 +124,7 @@ jobs:
           files: |
             db/pixiv.db
           tag_name: ${{ steps.date.outputs.date }}
-          body: |
-            Total entries in DB: `${{ steps.read_total.outputs.total }}`
+          prerelease: ${{ steps.read_total.outputs.total == '' }}
+          body: ${{ steps.set_body.outputs.body }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
