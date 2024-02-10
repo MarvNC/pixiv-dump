@@ -12,6 +12,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Get time details
+        id: get_time_details
+        run: |
+          echo "::set-output name=time_6h::$(($(date +%s) + 21600))"
+
       - name: Get previous run ID
         id: get_run_id
         run: |
@@ -20,6 +25,21 @@ jobs:
             | jq '.workflow_runs[1].id')
           echo "Previous run ID: $RUN_ID"
           echo "::set-output name=run_id::$RUN_ID"
+
+      - name: Wait for previous run to complete
+        id: wait_previous_run
+        run: |
+          while : ; do
+            STATUS=$(curl --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/${{ steps.get_run_id.outputs.run_id }}" \
+              | jq -r '.status')
+            echo "Previous run status: $STATUS"
+            if [[ "$STATUS" == "completed" ]]; then
+              break
+            fi
+            echo "Waiting for the previous run to complete..."
+            sleep 60
+          done
 
       - name: Download Artifacts from Last Workflow
         uses: actions/download-artifact@v4
@@ -47,9 +67,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Get ms until next run
+        id: get_ms_until_6h
+        # prettier-ignore
+        run: echo "::set-output name=ms::$((${{ steps.get_time_details.outputs.time_6h }} - $(date +%s)))"
+
       - name: Scrape
-        # 5.4 hours
-        run: node . --timeout=19440000
+        run: node . --timeout=${{ steps.get_ms_until_6h.outputs.ms }}
 
       - name: Upload DB
         uses: actions/upload-artifact@v4
