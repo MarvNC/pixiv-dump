@@ -61,14 +61,57 @@ jobs:
         id: check_file
         run: |
           if [[ -f total.txt ]]; then
-            echo "::set-output name=exists::true"
+            echo "::set-output name=completed::true"
           else
-            echo "::set-output name=exists::false"
+            echo "::set-output name=completed::false"
           fi
 
       - name: Upload total.txt if it exists
-        if: steps.check_file.outputs.exists == 'true'
+        if: steps.check_file.outputs.completed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: total
           path: total.txt
+
+  release:
+    runs-on: ubuntu-latest
+    needs: scrape
+    if: ${{ needs.scrape.outputs.completed == 'true' }}
+    steps:
+      - name: Get Current Date
+        id: date
+        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
+
+      - name: Download DB
+        uses: actions/download-artifact@v4
+        with:
+          name: db
+          path: db
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+
+      - name: Download total.txt
+        uses: actions/download-artifact@v4
+        with:
+          name: total
+          path: total
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+
+      - name: Read Total Count from total.txt
+        id: read_total
+        run: |
+          TOTAL=$(cat total/total.txt)
+          echo "Total: $TOTAL"
+          echo "::set-output name=total::$TOTAL"
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            db/pixiv.db
+          tag_name: ${{ steps.date.outputs.date }}
+          body: |
+            Total entries in DB: `${{ steps.read_total.outputs.total }}`
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
