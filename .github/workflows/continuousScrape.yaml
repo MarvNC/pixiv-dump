@@ -2,7 +2,7 @@ name: Scrape All
 
 on:
   schedule:
-    - cron: '0 * * * *'
+    - cron: '0 */6 * * *'
   workflow_dispatch:
 
 jobs:
@@ -48,8 +48,7 @@ jobs:
         run: npm run build
 
       - name: Scrape
-        # 5 hours 36 minutes
-        # run: node . --timeout=20160000
+        # 5 hours
         run: node . --timeout=16200000
 
       - name: Upload DB
