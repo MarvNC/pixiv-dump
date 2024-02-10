@@ -12,10 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get time of next run in 6 hours
+      - name: Get time of next run in 5.9 hours
         id: get_time_details
         run: |
-          echo "::set-output name=time_nextrun::$(($(date +%s) + 21600))"
+            echo "::set-output name=time_nextrun::$(($(date +%s) + 21300))"
 
       - name: Get previous run ID
         id: get_run_id
