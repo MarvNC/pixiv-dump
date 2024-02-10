@@ -16,6 +16,7 @@ export async function scrapeAllReadings() {
       tag_name: true,
     },
   });
+  console.log(`Scraping readings for ${articles.length} articles`);
 
   const progressBar = new cliProgress.SingleBar(
     {
