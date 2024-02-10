@@ -48,8 +48,8 @@ jobs:
         run: npm run build
 
       - name: Scrape
-        # 5 hours
-        run: node . --timeout=16200000
+        # 5.4 hours
+        run: node . --timeout=19440000
 
       - name: Upload DB
         uses: actions/upload-artifact@v4
