@@ -8,7 +8,8 @@
     "pretest": "npm run build",
     "migrate": "npx prisma migrate deploy",
     "build": "tsc",
-    "buildAndRun": "tsc && node ."
+    "buildAndRun": "tsc && node .",
+    "format": "prettier --write ."
   },
   "author": "marvnc",
   "license": "MIT",
