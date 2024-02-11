@@ -42,22 +42,30 @@ export async function getCategoryScraped({
 export async function updateCategoryScraped({
   category,
   date,
+  sort,
 }: {
   category: string;
   date: string;
+  sort: dateSort;
 }) {
-  const newestScraped = await getCategoryScraped({ category, sort: 'newest' });
-  const oldestScraped = await getCategoryScraped({ category, sort: 'oldest' });
-  if (new Date(date) > new Date(newestScraped)) {
-    await prisma.scrapeProgress.update({
-      where: { category },
-      data: { newestScraped: date },
-    });
+  // Check if the date is newer/older than the current date
+  const currentScrapeProgress = await getCategoryScraped({ category, sort });
+  const isDateNewer =
+    sort === 'newest' && new Date(date) > new Date(currentScrapeProgress);
+  const isDateOlder =
+    sort === 'oldest' && new Date(date) < new Date(currentScrapeProgress);
+
+  // If the date is not newer or older, we don't update
+  if (!isDateNewer && !isDateOlder) {
+    console.log(
+      `Date ${date} is not newer or older than current date ${currentScrapeProgress}`,
+    );
+    return;
   }
-  if (new Date(date) < new Date(oldestScraped)) {
-    await prisma.scrapeProgress.update({
-      where: { category },
-      data: { oldestScraped: date },
-    });
-  }
+  await prisma.scrapeProgress.update({
+    where: { category },
+    data: {
+      [dateSortToColumn[sort]]: date,
+    },
+  });
 }

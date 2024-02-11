@@ -1,7 +1,10 @@
 import { DATE_MAX_FUTURE, PIXIV_CATEGORIES } from '../constants';
 import { findPageNumberAtDate } from '../helpers/findPageNumberAtDate';
 import { scrapeArticleList } from './scrapeArticleList';
-import { getCategoryScraped } from '../helpers/lastScrapedHandler';
+import {
+  getCategoryScraped,
+  updateCategoryScraped,
+} from '../helpers/lastScrapedHandler';
 
 export async function scrapeAllCategories() {
   for (const category of PIXIV_CATEGORIES) {
@@ -26,10 +29,17 @@ async function scrapePixivCategory(category: string) {
 
   let lastLoopScrapeDate = DATE_MAX_FUTURE;
   let pageNumber = 1;
+  let firstArticleDate = '';
   // While we are scraping pages that are newer than newestScrapeDate, continue scraping
   while (new Date(lastLoopScrapeDate) > new Date(newestScrapeDate)) {
-    const result = await scrapeArticleList(category, pageNumber);
-    lastLoopScrapeDate = result.date;
+    const { date: justScrapedDate } = await scrapeArticleList(
+      category,
+      pageNumber,
+    );
+    if (pageNumber === 1) {
+      firstArticleDate = justScrapedDate;
+    }
+    lastLoopScrapeDate = justScrapedDate;
     if (!lastLoopScrapeDate) {
       break;
     }
@@ -37,7 +47,19 @@ async function scrapePixivCategory(category: string) {
       `${category}: Scrape date: ${lastLoopScrapeDate} Page: ${pageNumber}`,
     );
     pageNumber++;
+    updateCategoryScraped({
+      category,
+      date: lastLoopScrapeDate,
+      sort: 'oldest',
+    });
   }
+  // Once done, we update the newestScrapeDate to the very first article we scraped
+  // We don't update it before/during the loop because if the program is interrupted and we haven't reached the previous newestScrapeDate, there would be an unscraped hole.
+  await updateCategoryScraped({
+    category,
+    date: firstArticleDate,
+    sort: 'newest',
+  });
 
   const oldestScrapeDate = await getCategoryScraped({
     category,
@@ -64,12 +86,20 @@ async function scrapePixivCategory(category: string) {
   let count = 1;
   pageNumber = oldestScrapePage;
   while (count !== 0) {
-    const result = await scrapeArticleList(category, pageNumber);
-    count = result.count;
+    const { count: resultCount, date: resultDate } = await scrapeArticleList(
+      category,
+      pageNumber,
+    );
+    count = resultCount;
     console.log(
-      `${category}: Scrape date: ${result.date} Page: ${pageNumber} Count: ${count}`,
+      `${category}: Scrape date: ${resultDate} Page: ${pageNumber} Count: ${count}`,
     );
     pageNumber++;
+    updateCategoryScraped({
+      category,
+      date: resultDate,
+      sort: 'oldest',
+    });
   }
 
   console.log(`${category}: Scrape complete`);
