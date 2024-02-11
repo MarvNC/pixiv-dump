@@ -1,5 +1,4 @@
 import fetchPixivPage from '../fetch/fetchPixivPage';
-import { convertRawArticleToPixivArticle } from '../helpers/convertRawArticleToPixivArticle';
 import { prisma } from '..';
 
 export async function scrapeArticleList(category: string, pageNumber: number) {
@@ -13,8 +12,33 @@ export async function scrapeArticleList(category: string, pageNumber: number) {
   for (const article of data.articles) {
     await prisma.pixivArticle.upsert({
       where: { tag_name: article.tag_name },
-      update: convertRawArticleToPixivArticle(article),
-      create: convertRawArticleToPixivArticle(article),
+      update: {
+        tag_name: article.tag_name,
+        summary: article.summary,
+        updated_at: article.updated_at,
+        main_illst_url: article.main_illst_url,
+        view_count: article.view_count,
+        illust_count: article.illust_count,
+        check_count: article.check_count,
+        related_tags: JSON.stringify(article.related_tags),
+        parent: article.parent,
+        lastScraped: Date.now().toString(),
+      },
+      create: {
+        tag_name: article.tag_name,
+        summary: article.summary,
+        updated_at: article.updated_at,
+        main_illst_url: article.main_illst_url,
+        view_count: article.view_count,
+        illust_count: article.illust_count,
+        check_count: article.check_count,
+        related_tags: JSON.stringify(article.related_tags),
+        parent: article.parent,
+        lastScraped: Date.now().toString(),
+        reading: null,
+        header: null,
+        lastScrapedReading: null,
+      },
     });
   }
   return {
