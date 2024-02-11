@@ -39,19 +39,25 @@ export async function getCategoryScraped({
 /**
  * Updates the last scraped date for a category.
  */
-export async function updateCategoryLastScraped({
+export async function updateCategoryScraped({
   category,
-  sort,
   date,
 }: {
   category: string;
-  sort: dateSort;
   date: string;
 }) {
-  await prisma.scrapeProgress.update({
-    where: { category },
-    data: {
-      [dateSortToColumn[sort]]: date,
-    },
-  });
+  const newestScraped = await getCategoryScraped({ category, sort: 'newest' });
+  const oldestScraped = await getCategoryScraped({ category, sort: 'oldest' });
+  if (new Date(date) > new Date(newestScraped)) {
+    await prisma.scrapeProgress.update({
+      where: { category },
+      data: { newestScraped: date },
+    });
+  }
+  if (new Date(date) < new Date(oldestScraped)) {
+    await prisma.scrapeProgress.update({
+      where: { category },
+      data: { oldestScraped: date },
+    });
+  }
 }
