@@ -45,9 +45,8 @@ export const prisma = new PrismaClient();
 async function scrapeAll() {
   const totalArticlesInDB = await prisma.pixivArticle.count();
   console.log(`Loaded existing database with ${totalArticlesInDB} articles.`);
-  console.log(
-    `${await getArticlesWithReadingsCount()} articles with readings.`,
-  );
+  const initialReadingsCount = await getArticlesWithReadingsCount();
+  console.log(`${initialReadingsCount} articles with readings.`);
 
   await scrapeAllCategories();
   console.log('Scraping of article summaries complete');
@@ -59,6 +58,9 @@ async function scrapeAll() {
   console.log('Scraping of article readings complete');
   const totalArticlesWithReading = await getArticlesWithReadingsCount();
   console.log(`Total articles scraped: ${totalArticlesWithReading}`);
+  console.log(
+    `Scraped ${totalArticlesWithReading - initialReadingsCount} new articles`,
+  );
 
   return totalArticles;
 }
