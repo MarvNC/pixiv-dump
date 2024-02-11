@@ -2,10 +2,8 @@ import { PrismaClient } from '@prisma/client';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import fs from 'fs';
-import { PIXIV_CATEGORIES } from './constants';
-import { getCategoryLastScraped } from './helpers/lastScrapedHandler';
-import { scrapePixivCategory } from './scrape/scrapePixivCategory';
 import { scrapeAllReadings } from './scrape/scrapeAllReadings';
+import { scrapeAllCategories } from './scrape/scrapeAllCategories';
 
 export const prisma = new PrismaClient();
 
@@ -40,11 +38,7 @@ export const prisma = new PrismaClient();
 })();
 
 async function scrapeAll() {
-  for (const category of PIXIV_CATEGORIES) {
-    const newestScrapedDate = await getCategoryLastScraped(category);
-    console.log(`Scraping ${category} from ${newestScrapedDate}`);
-    await scrapePixivCategory(category, newestScrapedDate);
-  }
+  await scrapeAllCategories();
   console.log('Scraping of article summaries complete');
   const totalArticles = await prisma.pixivArticle.count();
   console.log(`Total articles: ${totalArticles}`);

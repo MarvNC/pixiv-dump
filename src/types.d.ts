@@ -33,3 +33,5 @@ type PixivPageResponse = {
   };
   articles: RawArticle[];
 };
+
+type dateSort = 'newest' | 'oldest';

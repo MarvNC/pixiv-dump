@@ -3,7 +3,9 @@ import { PixivArticle } from '@prisma/client';
 /**
  * Converts a raw article object to a PixivArticle object.
  */
-export function convertRawArticleToPixivArticle(rawArticle: RawArticle): PixivArticle {
+export function convertRawArticleToPixivArticle(
+  rawArticle: RawArticle,
+): PixivArticle {
   return {
     tag_name: rawArticle.tag_name,
     summary: rawArticle.summary,
