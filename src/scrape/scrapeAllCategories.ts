@@ -28,7 +28,7 @@ async function scrapePixivCategory(category: string) {
     sort: 'newest',
   });
   console.log(
-    `${category}: Updates: ${newestScrapeDate}, Total pages: ${totalPageCount}`,
+    `${category}: Newest scrape: ${newestScrapeDate}, Total pages: ${totalPageCount}`,
   );
 
   let lastLoopScrapeDate = DATE_MAX_FUTURE;
@@ -48,7 +48,7 @@ async function scrapePixivCategory(category: string) {
       break;
     }
     console.log(
-      `${category}: Scrape date: ${lastLoopScrapeDate} Page: ${pageNumber}/${totalPageCount}`,
+      `${category}: Updates: ${lastLoopScrapeDate} Page: ${pageNumber}/${totalPageCount}`,
     );
     pageNumber++;
     updateCategoryScraped({
