@@ -15,7 +15,7 @@ jobs:
       - name: Get time of next run in 1 hours
         id: get_time_details
         run: |
-          echo "::set-output name=time_nextrun::$(($(date +%s) + 7200))"
+          echo "::set-output name=time_nextrun::$(($(date +%s) + 3600))"
 
       - name: Get previous run ID
         id: get_run_id
