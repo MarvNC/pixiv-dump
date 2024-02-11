@@ -30,7 +30,7 @@ export async function findPageNumberAtDate(
       `Searching for ${lastScraped} in ${category}: ${left} ${right}`,
     );
   }
-  const pageNum = Math.max(left - 1, 1);
+  const pageNum = Math.max(left - 2, 1);
   const pageData = await fetchPixivPage(category, pageNum);
   console.log(
     `Found ${lastScraped} in ${category} at page ${pageNum} with date ${new Date(

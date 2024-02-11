@@ -57,9 +57,6 @@ export async function updateCategoryScraped({
 
   // If the date is not newer or older, we don't update
   if (!isDateNewer && !isDateOlder) {
-    console.log(
-      `Date ${date} is not newer or older than current date ${currentScrapeProgress}`,
-    );
     return;
   }
   await prisma.scrapeProgress.update({
