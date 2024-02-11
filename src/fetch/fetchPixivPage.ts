@@ -1,5 +1,6 @@
 import { fetchURL } from './fetchURL';
 import { PIXIV_BASE_URL } from '../constants';
+import { isPixivPageResponse } from './isPixivPageResponse';
 
 const pixivPage = (category: string, page: number) =>
   `${PIXIV_BASE_URL}${
@@ -18,17 +19,6 @@ async function fetchPixivPage(
   }
 
   return response.data;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function isPixivPageResponse(data: any): data is PixivPageResponse {
-  return (
-    data.meta &&
-    data.meta.all_count &&
-    data.meta.count &&
-    data.meta.page &&
-    data.articles
-  );
 }
 
 export default fetchPixivPage;
