@@ -15,7 +15,7 @@ jobs:
       - name: Get time of next run in 5.9 hours
         id: get_time_details
         run: |
-            echo "::set-output name=time_nextrun::$(($(date +%s) + 21300))"
+          echo "::set-output name=time_nextrun::$(($(date +%s) + 21300))"
 
       - name: Get previous run ID
         id: get_run_id
@@ -67,10 +67,15 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Get seconds until next run
+        id: get_seconds_until_nextrun
+        # prettier-ignore
+        run: echo "::set-output name=seconds::$((${{ steps.get_time_details.outputs.time_nextrun }} - $(date +%s)))"
+
       - name: Get ms until next run
         id: get_ms_until_nextrun
         # prettier-ignore
-        run: echo "::set-output name=ms::$((${{ steps.get_time_details.outputs.time_nextrun }} - $(date +%s)))"
+        run: echo "::set-output name=ms::$((${{ steps.get_seconds_until_nextrun.outputs.seconds }} * 1000))"
 
       - name: Scrape
         run: node . --timeout=${{ steps.get_ms_until_nextrun.outputs.ms }}
