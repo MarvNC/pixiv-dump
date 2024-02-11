@@ -5,6 +5,6 @@ export function isPixivPageResponse(data: any): data is PixivPageResponse {
     data.meta.all_count &&
     data.meta.count &&
     data.meta.page &&
-    !!data.articles
+    Array.isArray(data.articles)
   );
 }
