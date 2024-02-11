@@ -37,6 +37,10 @@ export const prisma = new PrismaClient();
     });
 })();
 
+/**
+ * Scrape all categories and readings
+ * @returns Total number of articles scraped
+ */
 async function scrapeAll() {
   const totalArticlesInDB = await prisma.pixivArticle.count();
   console.log(`Loaded existing database with ${totalArticlesInDB} articles.`);

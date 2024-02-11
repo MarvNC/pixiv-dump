@@ -3,7 +3,13 @@ import { convertRawArticleToPixivArticle } from '../helpers/convertRawArticleToP
 import { prisma } from '..';
 
 export async function scrapeArticleList(category: string, pageNumber: number) {
-  const data = await fetchPixivPage(category, pageNumber);
+  let data;
+  try {
+    data = await fetchPixivPage(category, pageNumber);
+  } catch (error) {
+    console.error(`Error fetching Pixiv page: ${error}`);
+    return { date: '', count: 0 };
+  }
   for (const article of data.articles) {
     await prisma.pixivArticle.upsert({
       where: { tag_name: article.tag_name },
