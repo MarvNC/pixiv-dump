@@ -5,6 +5,7 @@ import {
   getCategoryScraped,
   updateCategoryScraped,
 } from '../helpers/lastScrapedHandler';
+import { getTotalPageCount } from '../helpers/getTotalPageCount';
 
 export async function scrapeAllCategories() {
   for (const category of PIXIV_CATEGORIES) {
@@ -20,31 +21,34 @@ export async function scrapeAllCategories() {
  * @param category
  */
 async function scrapePixivCategory(category: string) {
+  const totalPageCount = await getTotalPageCount(category);
   // Scrape to newestScrape
   const newestScrapeDate = await getCategoryScraped({
     category,
     sort: 'newest',
   });
-  console.log(`${category}: Newest scrape date: ${newestScrapeDate}`);
+  console.log(
+    `${category}: Newest scrape date: ${newestScrapeDate}, Total pages: ${totalPageCount}`,
+  );
 
   let lastLoopScrapeDate = DATE_MAX_FUTURE;
   let pageNumber = 1;
   let firstArticleDate = '';
   // While we are scraping pages that are newer than newestScrapeDate, continue scraping
   while (new Date(lastLoopScrapeDate) > new Date(newestScrapeDate)) {
-    const { date: justScrapedDate } = await scrapeArticleList(
+    const { date: responseDate } = await scrapeArticleList(
       category,
       pageNumber,
     );
     if (pageNumber === 1) {
-      firstArticleDate = justScrapedDate;
+      firstArticleDate = responseDate;
     }
-    lastLoopScrapeDate = justScrapedDate;
+    lastLoopScrapeDate = responseDate;
     if (!lastLoopScrapeDate) {
       break;
     }
     console.log(
-      `${category}: Scrape date: ${lastLoopScrapeDate} Page: ${pageNumber}`,
+      `${category}: Scrape date: ${lastLoopScrapeDate} Page: ${pageNumber}/${totalPageCount}`,
     );
     pageNumber++;
     updateCategoryScraped({
@@ -92,7 +96,7 @@ async function scrapePixivCategory(category: string) {
     );
     count = resultCount;
     console.log(
-      `${category}: Scrape date: ${resultDate} Page: ${pageNumber} Count: ${count}`,
+      `${category}: Scrape date: ${resultDate} Page: ${pageNumber}/${totalPageCount}`,
     );
     pageNumber++;
     updateCategoryScraped({

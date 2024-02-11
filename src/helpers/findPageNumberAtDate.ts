@@ -1,4 +1,5 @@
 import fetchPixivPage from '../fetch/fetchPixivPage';
+import { getTotalPageCount } from './getTotalPageCount';
 
 /**
  * Finds the page number in a category to start scraping
@@ -11,10 +12,7 @@ export async function findPageNumberAtDate(
   category: string,
   dateToFind: string,
 ) {
-  const firstPageData = await fetchPixivPage(category, 1);
-  const totalPageCount = Math.ceil(
-    firstPageData.meta.all_count / firstPageData.meta.count,
-  );
+  const totalPageCount = await getTotalPageCount(category);
   let left = 1;
   let right = totalPageCount;
   while (left < right) {
