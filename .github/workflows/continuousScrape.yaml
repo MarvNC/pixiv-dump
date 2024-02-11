@@ -2,7 +2,7 @@ name: Scrape All
 
 on:
   schedule:
-    - cron: '0 */6 * * *'
+    - cron: '0 */1 * * *'
   workflow_dispatch:
 
 jobs:
@@ -12,10 +12,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get time of next run in 5.9 hours
+      - name: Get time of next run in 1 hours
         id: get_time_details
         run: |
-          echo "::set-output name=time_nextrun::$(($(date +%s) + 21300))"
+          echo "::set-output name=time_nextrun::$(($(date +%s) + 7200))"
 
       - name: Get previous run ID
         id: get_run_id
