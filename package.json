@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "test": "ava",
+    "pretest": "npm run build",
     "migrate": "npx prisma migrate deploy",
     "build": "tsc",
     "buildAndRun": "tsc && node ."

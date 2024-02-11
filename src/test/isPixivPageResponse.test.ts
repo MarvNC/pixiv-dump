@@ -1,7 +1,7 @@
 import test from 'ava';
 import { isPixivPageResponse } from '../fetch/isPixivPageResponse';
 
-test('isPixivPageResponse', (t) => {
+test('has articles', (t) => {
   t.true(
     isPixivPageResponse({
       meta: {
@@ -12,6 +12,9 @@ test('isPixivPageResponse', (t) => {
       articles: [{}],
     }),
   );
+});
+
+test('missing articles', (t) => {
   t.false(
     isPixivPageResponse({
       meta: {
@@ -21,6 +24,9 @@ test('isPixivPageResponse', (t) => {
       },
     }),
   );
+});
+
+test('empty articles', (t) => {
   t.true(
     isPixivPageResponse({
       meta: {
