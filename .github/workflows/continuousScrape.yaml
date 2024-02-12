@@ -109,7 +109,7 @@ jobs:
     steps:
       - name: Get Current Date
         id: date
-        run: echo "::set-output name=date::$(date +'%Y-%m-%d-%Hh%Mm')"
+        run: echo "::set-output name=date::$(date +'%Y-%m-%d')"
 
       - name: Download DB
         uses: actions/download-artifact@v4
@@ -158,3 +158,4 @@ jobs:
           body: ${{ steps.set_body.outputs.body }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
