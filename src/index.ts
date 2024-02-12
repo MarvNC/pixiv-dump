@@ -34,7 +34,7 @@ export const prisma = new PrismaClient();
     })
     .catch(async (e) => {
       console.error(e);
-      exitHandler();
+      exitHandler({ code: 1 });
     });
 })();
 
