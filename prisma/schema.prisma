@@ -29,5 +29,6 @@ model PixivArticle {
   lastScraped        String
   reading            String?
   header             String?
+  mainText           String?
   lastScrapedReading String?
 }
