@@ -2,9 +2,9 @@ import { PrismaClient } from '@prisma/client';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import fs from 'fs';
-import { scrapeAllReadings } from './scrape/scrapeAllReadings';
+import { scrapeAllIndividualArticles } from './scrape/scrapeAllIndividualArticles';
 import { scrapeAllCategories } from './scrape/scrapeAllCategories';
-import { getArticlesWithReadingsCount } from './helpers/getArticlesWithReadingsCount';
+import { getArticlesScrapedCount } from './helpers/getArticlesWithReadingsCount';
 
 export const prisma = new PrismaClient();
 
@@ -45,7 +45,7 @@ export const prisma = new PrismaClient();
 async function scrapeAll() {
   const totalArticlesInDB = await prisma.pixivArticle.count();
   console.log(`Loaded existing database with ${totalArticlesInDB} articles.`);
-  const initialReadingsCount = await getArticlesWithReadingsCount();
+  const initialReadingsCount = await getArticlesScrapedCount();
   console.log(`${initialReadingsCount} articles with readings.`);
 
   await scrapeAllCategories();
@@ -54,9 +54,9 @@ async function scrapeAll() {
   console.log(`Total articles: ${totalArticles}`);
 
   console.log('Scraping article readings');
-  await scrapeAllReadings();
+  await scrapeAllIndividualArticles();
   console.log('Scraping of article readings complete');
-  const totalArticlesWithReading = await getArticlesWithReadingsCount();
+  const totalArticlesWithReading = await getArticlesScrapedCount();
   console.log(`Total articles scraped: ${totalArticlesWithReading}`);
   console.log(
     `Scraped ${totalArticlesWithReading - initialReadingsCount} new articles`,
