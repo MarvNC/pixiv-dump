@@ -7,6 +7,7 @@
     "test": "ava",
     "pretest": "npm run build",
     "migrate": "npx prisma migrate deploy",
+    "prepare": "npx prisma generate",
     "build": "tsc",
     "buildAndRun": "tsc && node .",
     "format": "prettier --write ."
