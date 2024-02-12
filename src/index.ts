@@ -53,13 +53,13 @@ async function scrapeAll() {
   const totalArticles = await prisma.pixivArticle.count();
   console.log(`Total articles: ${totalArticles}`);
 
-  console.log('Scraping article readings');
+  console.log('Scraping single articles');
   await scrapeAllIndividualArticles();
-  console.log('Scraping of article readings complete');
-  const totalArticlesWithReading = await getArticlesScrapedCount();
-  console.log(`Total articles scraped: ${totalArticlesWithReading}`);
+  console.log('Scraping of articles complete!');
+  const individualArticlesScraped = await getArticlesScrapedCount();
+  console.log(`Total articles scraped: ${individualArticlesScraped}`);
   console.log(
-    `Scraped ${totalArticlesWithReading - initialReadingsCount} new articles`,
+    `Scraped ${individualArticlesScraped - initialReadingsCount} new articles`,
   );
 
   return totalArticles;
