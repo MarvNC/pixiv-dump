@@ -20,6 +20,7 @@ export async function scrapeSingleArticleInfo(tag_name: string) {
       lastScrapedReading: Date.now().toString(),
       reading,
       header: JSON.stringify(header),
+      mainText,
     },
   });
 }
