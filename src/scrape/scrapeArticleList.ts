@@ -38,6 +38,7 @@ export async function scrapeArticleList(category: string, pageNumber: number) {
         reading: null,
         header: null,
         lastScrapedReading: null,
+        lastScrapedArticle: null,
       },
     });
   }

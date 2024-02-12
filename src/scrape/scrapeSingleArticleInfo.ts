@@ -17,7 +17,7 @@ export async function scrapeSingleArticleInfo(tag_name: string) {
   await prisma.pixivArticle.update({
     where: { tag_name },
     data: {
-      lastScrapedReading: Date.now().toString(),
+      lastScrapedArticle: Date.now().toString(),
       reading,
       header: JSON.stringify(header),
       mainText,
