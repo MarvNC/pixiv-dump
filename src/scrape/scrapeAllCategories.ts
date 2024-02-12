@@ -1,4 +1,9 @@
-import { DATE_MAX_FUTURE, DATE_MIN_PAST, PIXIV_CATEGORIES } from '../constants';
+import {
+  DATE_MAX_FUTURE,
+  DATE_MIN_PAST,
+  OLDEST_SCRAPED_REACHED,
+  PIXIV_CATEGORIES,
+} from '../constants';
 import { findPageNumberAtDate } from '../helpers/findPageNumberAtDate';
 import { scrapeArticleList } from './scrapeArticleList';
 import {
@@ -78,6 +83,12 @@ async function scrapePixivCategory(category: string) {
   });
   console.log(`${category}: Oldest scrape date: ${oldestScrapeDate}`);
 
+  // If the oldestScrapeDate is OLDEST_SCRAPED_REACHED, we don't need to scrape any further
+  if (oldestScrapeDate === OLDEST_SCRAPED_REACHED) {
+    console.log(`${category}: Scrape complete`);
+    return;
+  }
+
   // Binary search for oldestScrapeDate
   const oldestScrapePage = await findPageNumberAtDate(
     category,
@@ -106,6 +117,11 @@ async function scrapePixivCategory(category: string) {
       sort: 'oldest',
     });
   }
+  updateCategoryScraped({
+    category,
+    date: OLDEST_SCRAPED_REACHED,
+    sort: 'oldest',
+  });
 
   console.log(`${category}: Scrape complete`);
 }
