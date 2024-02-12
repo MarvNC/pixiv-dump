@@ -48,6 +48,10 @@ export async function updateCategoryScraped({
   date: string;
   sort: dateSort;
 }) {
+  // Check if valid date
+  if (isNaN(new Date(date).getTime())) {
+    return;
+  }
   // Check if the date is newer/older than the current date
   const currentScrapeProgress = await getCategoryScraped({ category, sort });
   const isDateNewer =
