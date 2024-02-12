@@ -1,4 +1,8 @@
-import { DEFAULT_LAST_SCRAPED, DEFAULT_OLDEST_SCRAPED } from '../constants';
+import {
+  DEFAULT_LAST_SCRAPED,
+  DEFAULT_OLDEST_SCRAPED,
+  OLDEST_SCRAPED_REACHED,
+} from '../constants';
 import { prisma } from '..';
 
 const dateSortToColumn: Record<
@@ -48,6 +52,10 @@ export async function updateCategoryScraped({
   date: string;
   sort: dateSort;
 }) {
+  // Check if OLDEST_SCRAPED_REACHED
+  if (date === OLDEST_SCRAPED_REACHED) {
+    return setCategoryScraped(category, sort, date);
+  }
   // Check if valid date
   if (isNaN(new Date(date).getTime())) {
     return;
@@ -63,6 +71,13 @@ export async function updateCategoryScraped({
   if (!isDateNewer && !isDateOlder) {
     return;
   }
+  await setCategoryScraped(category, sort, date);
+}
+async function setCategoryScraped(
+  category: string,
+  sort: dateSort,
+  date: string,
+) {
   await prisma.scrapeProgress.update({
     where: { category },
     data: {
