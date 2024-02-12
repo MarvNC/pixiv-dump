@@ -9,12 +9,9 @@ export async function scrapeSingleArticleInfo(tag_name: string) {
   const response = await fetchURL(url);
   const dom = new JSDOM(response.data);
   // Get the reading
-  const reading = dom.window.document.querySelector('p.subscript')?.textContent;
+  const reading = getReading(dom);
   // Get headers
-  const breadcrumbs = dom.window.document.getElementById('breadcrumbs');
-  const header = breadcrumbs
-    ? [...breadcrumbs.children].map((child) => child.textContent)
-    : [];
+  const header = getHeaders(dom);
 
   // Update the article
   await prisma.pixivArticle.update({
@@ -25,4 +22,16 @@ export async function scrapeSingleArticleInfo(tag_name: string) {
       header: JSON.stringify(header),
     },
   });
+}
+
+function getHeaders(dom: JSDOM) {
+  const breadcrumbs = dom.window.document.getElementById('breadcrumbs');
+  const header = breadcrumbs
+    ? [...breadcrumbs.children].map((child) => child.textContent)
+    : [];
+  return header;
+}
+
+function getReading(dom: JSDOM) {
+  return dom.window.document.querySelector('p.subscript')?.textContent;
 }
