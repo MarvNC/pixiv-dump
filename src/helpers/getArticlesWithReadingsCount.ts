@@ -1,7 +1,7 @@
 import { prisma } from '..';
 
-export async function getArticlesWithReadingsCount() {
+export async function getArticlesScraped() {
   return await prisma.pixivArticle.count({
-    where: { lastScrapedReading: { not: null } },
+    where: { lastScrapedArticle: { not: null } },
   });
 }

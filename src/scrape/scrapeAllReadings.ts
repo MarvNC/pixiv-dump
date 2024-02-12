@@ -10,7 +10,7 @@ export const pixivArticleURL = (tag_name: string) =>
  */
 export async function scrapeAllReadings() {
   const articles = await prisma.pixivArticle.findMany({
-    where: { lastScrapedReading: null },
+    where: { lastScrapedArticle: null },
     select: {
       tag_name: true,
     },
