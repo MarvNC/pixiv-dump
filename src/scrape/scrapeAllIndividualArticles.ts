@@ -1,10 +1,7 @@
 import cliProgress from 'cli-progress';
-import { PIXIV_BASE_URL } from '../constants';
 import { prisma } from '..';
 import { scrapeSingleArticleInfo } from './scrapeSingleArticleInfo';
 
-export const pixivArticleURL = (tag_name: string) =>
-  `${PIXIV_BASE_URL}a/${encodeURIComponent(tag_name)}`;
 /**
  * Scrape all readings for articles that have not been scraped yet
  */

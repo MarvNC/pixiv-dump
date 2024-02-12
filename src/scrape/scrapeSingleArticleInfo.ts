@@ -1,7 +1,9 @@
 import { JSDOM } from 'jsdom';
 import { fetchURL } from '../fetch/fetchURL';
 import { prisma } from '..';
-import { pixivArticleURL } from './scrapeAllIndividualArticles';
+import { PIXIV_BASE_URL } from '../constants';
+const pixivArticleURL = (tag_name: string) =>
+  `${PIXIV_BASE_URL}a/${encodeURIComponent(tag_name)}`;
 
 export async function scrapeSingleArticleInfo(tag_name: string) {
   // Fetch the page
