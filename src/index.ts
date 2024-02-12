@@ -2,7 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import fs from 'fs';
-import { scrapeAllReadings } from './scrape/scrapeAllReadings';
+import { scrapeAllIndividualArticles } from './scrape/scrapeAllIndividualArticles';
 import { scrapeAllCategories } from './scrape/scrapeAllCategories';
 import { getArticlesScraped } from './helpers/getArticlesWithReadingsCount';
 
@@ -54,7 +54,7 @@ async function scrapeAll() {
   console.log(`Total articles: ${totalArticles}`);
 
   console.log('Scraping article readings');
-  await scrapeAllReadings();
+  await scrapeAllIndividualArticles();
   console.log('Scraping of article readings complete');
   const totalArticlesWithReading = await getArticlesScraped();
   console.log(`Total articles scraped: ${totalArticlesWithReading}`);

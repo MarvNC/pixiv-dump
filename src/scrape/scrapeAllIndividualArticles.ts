@@ -8,7 +8,7 @@ export const pixivArticleURL = (tag_name: string) =>
 /**
  * Scrape all readings for articles that have not been scraped yet
  */
-export async function scrapeAllReadings() {
+export async function scrapeAllIndividualArticles() {
   const articles = await prisma.pixivArticle.findMany({
     where: { lastScrapedArticle: null },
     select: {

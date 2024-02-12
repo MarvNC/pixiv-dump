@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { fetchURL } from '../fetch/fetchURL';
 import { prisma } from '..';
-import { pixivArticleURL } from './scrapeAllReadings';
+import { pixivArticleURL } from './scrapeAllIndividualArticles';
 
 export async function scrapeSingleArticleInfo(tag_name: string) {
   // Fetch the page
