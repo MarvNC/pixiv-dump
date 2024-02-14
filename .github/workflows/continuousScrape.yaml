@@ -146,7 +146,7 @@ jobs:
           if [[ "${{ steps.read_total.outputs.total }}" != "" ]]; then
             echo "::set-output name=body::Total entries in DB: ${{ steps.read_total.outputs.total }}"
           else
-            echo "::set-output name=body::Scraping of readings is still in progress."
+            echo "::set-output name=body::Scraping of articles is still in progress."
           fi
 
       - name: Create Release
