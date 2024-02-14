@@ -28,7 +28,11 @@ export async function scrapeAllIndividualArticles() {
 
   let i = 0;
   for (const { tag_name } of articles) {
-    await scrapeSingleArticleInfo(tag_name);
+    try {
+      await scrapeSingleArticleInfo(tag_name);
+    } catch (error) {
+      console.error(`Error scraping article ${tag_name}: ${error}`);
+    }
     i++;
     progressBar.update(i);
   }
