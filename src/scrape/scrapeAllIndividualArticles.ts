@@ -1,17 +1,12 @@
 import cliProgress from 'cli-progress';
-import { prisma } from '..';
 import { scrapeSingleArticleInfo } from './scrapeSingleArticleInfo';
+import { getArticlesToScrape } from './getArticlesToScrape';
 
 /**
  * Scrape all readings for articles that have not been scraped yet
  */
 export async function scrapeAllIndividualArticles() {
-  const articles = await prisma.pixivArticle.findMany({
-    where: { lastScrapedArticle: null },
-    select: {
-      tag_name: true,
-    },
-  });
+  const articles = await getArticlesToScrape();
   console.log(`Scraping readings for ${articles.length} articles`);
 
   const progressBar = new cliProgress.SingleBar(
