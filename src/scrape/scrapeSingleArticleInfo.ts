@@ -2,13 +2,25 @@ import { JSDOM } from 'jsdom';
 import { fetchURL } from '../fetch/fetchURL';
 import { prisma } from '..';
 import { PIXIV_BASE_URL } from '../constants';
+import { AxiosError } from 'axios';
 const pixivArticleURL = (tag_name: string) =>
   `${PIXIV_BASE_URL}a/${encodeURIComponent(tag_name)}`;
 
 export async function scrapeSingleArticleInfo(tag_name: string) {
   // Fetch the page
   const url = pixivArticleURL(tag_name);
-  const response = await fetchURL(url);
+  let response;
+  try {
+    response = await fetchURL(url);
+  } catch (error: unknown) {
+    const e = error as AxiosError;
+    if (e.response?.status === 404) {
+      console.log(`Article ${tag_name} was deleted from Pixiv`);
+      // TODO: Delete the article from the database
+      return;
+    }
+    throw error;
+  }
   const dom = new JSDOM(response.data);
   const document = dom.window.document;
   const reading = getReading(document);
