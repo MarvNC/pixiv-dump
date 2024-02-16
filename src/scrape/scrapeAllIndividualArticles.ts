@@ -12,7 +12,7 @@ export async function scrapeAllIndividualArticles() {
       tag_name: true,
     },
   });
-  console.log(`Scraping readings for ${articles.length} articles`);
+  console.log(`Scraping ${articles.length} individual articles`);
 
   const progressBar = new cliProgress.SingleBar(
     {
