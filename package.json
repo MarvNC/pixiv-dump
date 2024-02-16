@@ -9,7 +9,8 @@
     "migrate": "npx prisma migrate deploy",
     "prepare": "npx prisma generate",
     "build": "tsc",
-    "buildAndRun": "tsc && node .",
+    "start": "node .",
+    "prestart": "npm run build",
     "format": "prettier --write ."
   },
   "author": "marvnc",
