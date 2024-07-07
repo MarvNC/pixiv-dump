@@ -1,6 +1,8 @@
-name: Test Daily
+name: Test
 
 on:
+  push:
+  pull_request:
   schedule:
     - cron: '0 0 * * *'
   workflow_dispatch:
