@@ -1,5 +1,5 @@
 import test from 'ava';
-import { scrapeSingleArticleInfo } from '../src/scrape/scrapeSingleArticleInfo';
+import { scrapeSingleArticleInfo } from '../scrape/scrapeSingleArticleInfo';
 
 test('scrapeSingleArticleInfo should not return null values for フリーレン', async (t) => {
   const frierenTag = 'フリーレン';
