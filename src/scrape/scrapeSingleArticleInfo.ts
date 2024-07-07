@@ -1,6 +1,5 @@
 import { JSDOM } from 'jsdom';
 import { fetchURL } from '../fetch/fetchURL';
-import { prisma } from '..';
 import { PIXIV_BASE_URL } from '../constants';
 const pixivArticleURL = (tag_name: string) =>
   `${PIXIV_BASE_URL}a/${encodeURIComponent(tag_name)}`;
@@ -15,16 +14,11 @@ export async function scrapeSingleArticleInfo(tag_name: string) {
   const header = getHeaders(document);
   const mainText = getMainText(document);
 
-  // Update the article
-  await prisma.pixivArticle.update({
-    where: { tag_name },
-    data: {
-      lastScrapedArticle: Date.now().toString(),
-      reading,
-      header: JSON.stringify(header),
-      mainText,
-    },
-  });
+  return {
+    reading,
+    header,
+    mainText,
+  };
 }
 
 function getHeaders(document: Document) {

@@ -29,7 +29,16 @@ export async function scrapeAllIndividualArticles() {
   let i = 0;
   for (const { tag_name } of articles) {
     try {
-      await scrapeSingleArticleInfo(tag_name);
+      const { reading, header, mainText } = await scrapeSingleArticleInfo(tag_name);
+      await prisma.pixivArticle.update({
+        where: { tag_name },
+        data: {
+          lastScrapedArticle: Date.now().toString(),
+          reading,
+          header: JSON.stringify(header),
+          mainText,
+        },
+      });
     } catch (error) {
       console.error(`Error scraping article ${tag_name}: ${error}`);
     }
