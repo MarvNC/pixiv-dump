@@ -60,6 +60,9 @@ async function scrapePixivCategory(category: string) {
       `${category}: Updates: ${lastLoopScrapeDate} Page: ${pageNumber}/${totalPageCount}`,
     );
     pageNumber++;
+    if (pageNumber > totalPageCount) {
+      break;
+    }
     updateCategoryScraped({
       category,
       date: lastLoopScrapeDate,
@@ -101,7 +104,7 @@ async function scrapePixivCategory(category: string) {
   // Scrape from oldestScrapePage to the end
   let count = 1;
   pageNumber = oldestScrapePage;
-  while (count !== 0) {
+  while (count !== 0 && pageNumber <= totalPageCount) {
     const { count: resultCount, date: resultDate } = await scrapeArticleList(
       category,
       pageNumber,

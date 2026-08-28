@@ -3,7 +3,7 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import fs from 'fs';
 import { scrapeAllIndividualArticles } from './scrape/scrapeAllIndividualArticles';
-import { scrapeAllCategories } from './scrape/scrapeAllCategories';
+import { scrapeSitemap } from './scrape/scrapeSitemap';
 import { getArticlesScrapedCount } from './helpers/getArticlesWithReadingsCount';
 import { closeSession } from './fetch/fetchURL';
 
@@ -48,8 +48,9 @@ async function scrapeAll() {
   const initialReadingsCount = await getArticlesScrapedCount();
   console.log(`${initialReadingsCount} articles with readings.`);
 
-  await scrapeAllCategories();
-  console.log('Scraping of article summaries complete');
+  console.log('Scraping sitemap');
+  await scrapeSitemap();
+  console.log('Scraping of sitemap complete');
   const totalArticles = await prisma.pixivArticle.count();
   console.log(`Total articles: ${totalArticles}`);
 

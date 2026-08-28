@@ -21,3 +21,7 @@ export const DEFAULT_LAST_SCRAPED = DATE_MIN_PAST;
 export const DEFAULT_OLDEST_SCRAPED = DATE_MAX_FUTURE;
 export const OLDEST_SCRAPED_REACHED = 'OLDEST_SCRAPED_REACHED';
 export const FETCH_DELAY_MS = 0;
+export const LIST_OFFSET_LIMIT = 10000;
+export const SITEMAP_INDEX_URL = `${PIXIV_BASE_URL}sitemap.xml`;
+export const SITEMAP_PROGRESS_CATEGORY = 'sitemap';
+export const PIXIV_API_BASE_URL = `${PIXIV_BASE_URL}_api`;
