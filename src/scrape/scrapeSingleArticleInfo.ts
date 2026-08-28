@@ -1,10 +1,5 @@
-import { JSDOM } from 'jsdom';
-import { fetchURL } from '../fetch/fetchURL';
-import { PIXIV_BASE_URL } from '../constants';
-import { isAxiosError } from 'axios';
-
-const pixivArticleURL = (tag_name: string) =>
-  `${PIXIV_BASE_URL}a/${encodeURIComponent(tag_name)}`;
+import { CloudflareError, fetchURL, HttpError } from '../fetch/fetchURL';
+import { PIXIV_API_BASE_URL } from '../constants';
 
 export class ArticleNotFoundError extends Error {
   constructor(tag_name: string) {
@@ -13,172 +8,162 @@ export class ArticleNotFoundError extends Error {
   }
 }
 
-interface ArticleData {
-  yomigana?: string;
+type RelatedArticle = {
+  tagName?: string;
+};
+
+type ArticleApi = {
   categories?: string[];
+  yomigana?: string;
   abstract?: string;
   text?: string;
-}
+  mainIllust?: { imageUrl?: string };
+  relatedArticles?: {
+    parent_article?: RelatedArticle;
+    child_articles?: RelatedArticle[];
+    sibling_articles?: RelatedArticle[];
+  };
+  updatedAtTimestamp?: number;
+};
 
-interface BreadcrumbItem {
+type ArticleInfoApi = {
+  articleViewCount?: number;
+  pixivWorkCount?: number;
+  checklistCount?: number;
+};
+
+type BreadcrumbItem = {
   tagName: string;
   url: string;
+};
+
+export type ScrapedArticle = {
+  reading: string;
+  header: string[];
+  mainText: string;
+  summary: string;
+  parent: string | null;
+  related_tags: string[];
+  main_illst_url: string;
+  view_count: number;
+  illust_count: number;
+  check_count: number;
+  updated_at: string;
+};
+
+function apiUrl(path: string, tag_name: string) {
+  return `${PIXIV_API_BASE_URL}${path}/${encodeURIComponent(
+    tag_name.replace(/\+/g, ' '),
+  )}?lang=ja`;
 }
 
-interface NextDataPageProps {
-  swrFallback?: {
-    [key: string]: ArticleData | BreadcrumbItem[] | unknown;
-  };
+async function fetchJson<T>(url: string): Promise<T> {
+  const response = await fetchURL(url);
+  return response.data as T;
 }
 
-interface NextData {
-  props?: {
-    pageProps?: NextDataPageProps;
-  };
-}
-
-async function fetchArticlePage(url: string, tag_name: string) {
-  try {
-    const response = await fetchURL(url);
-    return response;
-  } catch (error) {
-    if (isAxiosError(error) && error.response?.status === 404) {
-      throw new ArticleNotFoundError(tag_name);
+function relatedTagNames(article: ArticleApi, tag_name: string): string[] {
+  const related = article.relatedArticles;
+  const names: string[] = [];
+  const seen = new Set<string>([tag_name]);
+  const add = (name?: string) => {
+    if (!name || seen.has(name)) {
+      return;
     }
-    throw error;
-  }
-}
-
-/**
- * Extracts article data from the Next.js __NEXT_DATA__ JSON in the HTML
- */
-function extractArticleDataFromHTML(
-  html: string,
-  tag_name: string,
-): {
-  articleData: ArticleData | null;
-  breadcrumbs: BreadcrumbItem[] | null;
-} {
-  // Parse HTML to find __NEXT_DATA__ script tag
-  const dom = new JSDOM(html);
-  const document = dom.window.document;
-
-  const nextDataScript = document.getElementById('__NEXT_DATA__');
-  if (!nextDataScript || !nextDataScript.textContent) {
-    throw new Error('Could not find __NEXT_DATA__ in page');
-  }
-
-  let nextData: NextData;
-  try {
-    nextData = JSON.parse(nextDataScript.textContent);
-  } catch (error) {
-    throw new Error(`Failed to parse __NEXT_DATA__: ${error}`);
-  }
-
-  const swrFallback = nextData.props?.pageProps?.swrFallback;
-  if (!swrFallback) {
-    throw new Error('Could not find swrFallback in __NEXT_DATA__');
-  }
-
-  // Find the article data key - it contains the literal string '{tagName}' as a placeholder
-  // in the API path, and also contains the actual tag name value
-  // Example key format: '@"openapi-","/get_article/{tagName}",#params:#query:#lang:"ja",,path:#tagName:"フリーレン",,,,'
-  const articleKey = Object.keys(swrFallback).find(
-    (key) => key.includes('/get_article/{tagName}') && key.includes(tag_name),
-  );
-
-  // Find the breadcrumbs key with the same pattern
-  const breadcrumbsKey = Object.keys(swrFallback).find(
-    (key) =>
-      key.includes('/get_breadcrumbs/{tagName}') && key.includes(tag_name),
-  );
-
-  const articleData = articleKey
-    ? (swrFallback[articleKey] as ArticleData)
-    : null;
-  const breadcrumbs = breadcrumbsKey
-    ? (swrFallback[breadcrumbsKey] as BreadcrumbItem[])
-    : null;
-
-  return { articleData, breadcrumbs };
-}
-
-export async function scrapeSingleArticleInfo(tag_name: string) {
-  // Fetch the page
-  const url = pixivArticleURL(tag_name);
-  const response = await fetchArticlePage(url, tag_name);
-
-  // Extract data from Next.js JSON
-  const { articleData, breadcrumbs } = extractArticleDataFromHTML(
-    response.data,
-    tag_name,
-  );
-
-  if (!articleData) {
-    throw new Error(`Could not find article data for tag: ${tag_name}`);
-  }
-
-  // Extract reading (yomigana)
-  const reading = articleData.yomigana || '';
-
-  // Extract headers from breadcrumbs and categories
-  const header = getHeaders(breadcrumbs, articleData.categories, tag_name);
-
-  // Extract main text from abstract and text fields
-  const mainText = getMainText(articleData);
-
-  return {
-    reading,
-    header,
-    mainText,
+    seen.add(name);
+    names.push(name);
   };
+  add(related?.parent_article?.tagName);
+  for (const child of related?.child_articles ?? []) {
+    add(child.tagName);
+  }
+  for (const sibling of related?.sibling_articles ?? []) {
+    add(sibling.tagName);
+  }
+  return names;
 }
 
-/**
- * Extracts headers from breadcrumbs and categories
- * Falls back to categories if breadcrumbs are not available
- */
 function getHeaders(
   breadcrumbs: BreadcrumbItem[] | null,
   categories: string[] | undefined,
   tag_name: string,
 ): string[] {
   let headers: string[] = [];
-
-  // Try to use breadcrumbs first
   if (breadcrumbs && breadcrumbs.length > 0) {
     headers = breadcrumbs.map((bc) => bc.tagName);
-  }
-  // Fall back to categories if breadcrumbs are not available
-  else if (categories && categories.length > 0) {
+  } else if (categories && categories.length > 0) {
     headers = [...categories];
   }
-
-  // Always add the tag name at the end
   if (!headers.includes(tag_name)) {
     headers.push(tag_name);
   }
-
   if (!headers.length) {
     throw new Error(`No headers found for tag: ${tag_name}`);
   }
-
   return headers;
 }
 
-/**
- * Extracts main text from article data
- * Combines abstract and the main text
- */
-function getMainText(articleData: ArticleData): string {
-  const abstract = articleData.abstract || '';
-  const text = articleData.text || '';
-
-  // If we have both abstract and text, combine them
+function getMainText(article: ArticleApi): string {
+  const abstract = article.abstract || '';
+  const text = article.text || '';
   if (abstract && text) {
     return `${abstract}\n\n${text}`;
   }
-
-  // Otherwise return whichever one we have
   return abstract || text || '';
+}
+
+function formatUpdatedAt(unixSeconds?: number): string {
+  if (!unixSeconds) {
+    return '';
+  }
+  const jst = new Date(unixSeconds * 1000 + 9 * 60 * 60 * 1000);
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return `${jst.getUTCFullYear()}-${pad(jst.getUTCMonth() + 1)}-${pad(
+    jst.getUTCDate(),
+  )} ${pad(jst.getUTCHours())}:${pad(jst.getUTCMinutes())}:${pad(
+    jst.getUTCSeconds(),
+  )}`;
+}
+
+export async function scrapeSingleArticleInfo(
+  tag_name: string,
+): Promise<ScrapedArticle> {
+  let article: ArticleApi;
+  let breadcrumbs: BreadcrumbItem[] | null;
+  let info: ArticleInfoApi | null;
+  const ignoreOptional = (error: unknown) => {
+    if (error instanceof CloudflareError) {
+      throw error;
+    }
+    return null;
+  };
+
+  try {
+    article = await fetchJson<ArticleApi>(apiUrl('/get_article', tag_name));
+    breadcrumbs = await fetchJson<BreadcrumbItem[]>(
+      apiUrl('/get_breadcrumbs', tag_name),
+    ).catch(ignoreOptional);
+    info = await fetchJson<ArticleInfoApi>(
+      apiUrl('/get_article_info', tag_name),
+    ).catch(ignoreOptional);
+  } catch (error) {
+    if (error instanceof HttpError && error.status === 404) {
+      throw new ArticleNotFoundError(tag_name);
+    }
+    throw error;
+  }
+
+  return {
+    reading: article.yomigana || '',
+    header: getHeaders(breadcrumbs, article.categories, tag_name),
+    mainText: getMainText(article),
+    summary: article.abstract || '',
+    parent: article.relatedArticles?.parent_article?.tagName || null,
+    related_tags: relatedTagNames(article, tag_name),
+    main_illst_url: article.mainIllust?.imageUrl || '',
+    view_count: info?.articleViewCount || 0,
+    illust_count: info?.pixivWorkCount || 0,
+    check_count: info?.checklistCount || 0,
+    updated_at: formatUpdatedAt(article.updatedAtTimestamp),
+  };
 }

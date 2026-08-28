@@ -1,9 +1,12 @@
 import cliProgress from 'cli-progress';
 import { prisma } from '..';
+import { CloudflareError, HttpError } from '../fetch/fetchURL';
 import {
   scrapeSingleArticleInfo,
   ArticleNotFoundError,
 } from './scrapeSingleArticleInfo';
+
+const CF_GIVE_UP_STREAK = 5;
 
 /**
  * Scrape all readings for articles that have not been scraped yet or have been updated since the last scrape.
@@ -41,6 +44,7 @@ export async function scrapeAllIndividualArticles() {
     `Scraping ${articles.length} individual articles (${newlyNeverScraped.length} newly added, ${updatedArticles.length} updated)`,
   );
 
+  const showBar = Boolean(process.stdout.isTTY);
   const progressBar = new cliProgress.SingleBar(
     {
       format:
@@ -51,40 +55,75 @@ export async function scrapeAllIndividualArticles() {
     },
     cliProgress.Presets.shades_classic,
   );
-  progressBar.start(articles.length, 0);
+  if (showBar) {
+    progressBar.start(articles.length, 0);
+  }
 
   let progressBarIndex = 0;
-  for (const { tag_name } of articles) {
+  let cfStreak = 0;
+  while (progressBarIndex < articles.length) {
+    const { tag_name } = articles[progressBarIndex];
     try {
-      const { reading, header, mainText } =
-        await scrapeSingleArticleInfo(tag_name);
+      const scraped = await scrapeSingleArticleInfo(tag_name);
       await prisma.pixivArticle.update({
         where: { tag_name },
         data: {
           lastScrapedArticle: Date.now().toString(),
-          reading,
-          header: JSON.stringify(header),
-          mainText,
+          reading: scraped.reading,
+          header: JSON.stringify(scraped.header),
+          mainText: scraped.mainText,
+          summary: scraped.summary,
+          parent: scraped.parent,
+          related_tags: JSON.stringify(scraped.related_tags),
+          main_illst_url: scraped.main_illst_url,
+          view_count: scraped.view_count,
+          illust_count: scraped.illust_count,
+          check_count: scraped.check_count,
+          ...(scraped.updated_at ? { updated_at: scraped.updated_at } : {}),
         },
       });
+      cfStreak = 0;
     } catch (error) {
       if (error instanceof ArticleNotFoundError) {
         console.log(`Article not found, removing from database: ${tag_name}`);
         await prisma.pixivArticle.delete({
           where: { tag_name },
         });
+        cfStreak = 0;
+      } else if (error instanceof HttpError && error.status === 429) {
+        console.log(`HTTP 429 on ${tag_name}, waiting 20000ms`);
+        await new Promise((resolve) => setTimeout(resolve, 20_000));
+        continue;
+      } else if (error instanceof CloudflareError) {
+        cfStreak++;
+        if (cfStreak >= CF_GIVE_UP_STREAK) {
+          console.error(
+            `Cloudflare still blocking after ${cfStreak} articles, stopping article scrape`,
+          );
+          break;
+        }
+        const waitMs = 10_000;
+        console.log(
+          `Cloudflare blocking ${tag_name}, waiting ${waitMs}ms (streak ${cfStreak})`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        continue;
       } else {
         console.error(`Error scraping article ${tag_name}: ${error}`);
       }
     }
     progressBarIndex++;
-    progressBar.update(progressBarIndex);
-    if (progressBarIndex % 1000 === 0) {
-      console.log(`Processed ${progressBarIndex} articles`);
+    if (showBar) {
+      progressBar.update(progressBarIndex);
+    }
+    if (progressBarIndex % 10 === 0) {
+      console.log(`Processed ${progressBarIndex}/${articles.length} articles`);
     }
     if (progressBarIndex === newlyNeverScraped.length) {
       console.log(`All newly added articles processed`);
     }
   }
-  progressBar.stop();
+  if (showBar) {
+    progressBar.stop();
+  }
 }
