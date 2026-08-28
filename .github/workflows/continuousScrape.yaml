@@ -59,10 +59,15 @@ jobs:
           if [ -n "$LATEST_RELEASE_URL" ]; then
             echo "Downloading pixiv.db from $LATEST_RELEASE_URL"
             curl --silent --show-error -L "$LATEST_RELEASE_URL" -o db/pixiv.db
+            CHECK=$(sqlite3 db/pixiv.db "PRAGMA integrity_check;")
+            echo "downloaded integrity_check: $CHECK"
+            if [[ "$CHECK" != "ok" ]]; then
+              echo "Downloaded database is malformed"
+              exit 1
+            fi
           else
             echo "pixiv.db not found in the latest release or no releases found."
           fi
-        continue-on-error: true
 
       - name: Install Dependencies
         run: bun install
@@ -96,12 +101,32 @@ jobs:
           xvfb-run -a bun src/index.ts --timeout=${{
           steps.get_ms_until_nextrun.outputs.ms }}
 
+      - name: Checkpoint SQLite
+        id: checkpoint
+        if: always()
+        run: |
+          if [[ ! -f db/pixiv.db ]]; then
+            echo "db/pixiv.db missing"
+            exit 1
+          fi
+          sqlite3 db/pixiv.db "PRAGMA wal_checkpoint(TRUNCATE);" || true
+          rm -f db/pixiv-export.db
+          sqlite3 db/pixiv.db ".backup db/pixiv-export.db"
+          CHECK=$(sqlite3 db/pixiv-export.db "PRAGMA integrity_check;")
+          echo "integrity_check: $CHECK"
+          if [[ "$CHECK" != "ok" ]]; then
+            echo "Refusing to upload a malformed database"
+            exit 1
+          fi
+          mv db/pixiv-export.db db/pixiv.db
+          rm -f db/pixiv.db-wal db/pixiv.db-shm
+
       - name: Upload DB
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && steps.checkpoint.outcome == 'success'
         with:
           name: db
-          path: db/*
+          path: db/pixiv.db
 
       - name: Check if total.txt exists
         id: check_file
@@ -122,6 +147,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     needs: scrape
+    if: always() && needs.scrape.result != 'skipped'
     steps:
       - name: Get Current Date
         id: date

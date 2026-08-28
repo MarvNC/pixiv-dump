@@ -91,6 +91,11 @@ async function exitHandler({
 } = {}) {
   console.log('Exiting program');
   try {
+    await prisma.$queryRawUnsafe('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch (error) {
+    console.error(error);
+  }
+  try {
     await prisma.$disconnect();
   } catch (error) {
     console.error(error);
