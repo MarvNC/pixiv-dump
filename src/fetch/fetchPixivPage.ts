@@ -3,7 +3,7 @@ import { PIXIV_BASE_URL } from '../constants';
 
 const pixivPage = (category: string, page: number) =>
   `${PIXIV_BASE_URL}${
-    category ? 'category/' + category : ''
+    category ? 'category/' + encodeURIComponent(category) : ''
   }?json=1&page=${page}`;
 
 async function fetchPixivPage(
@@ -13,7 +13,7 @@ async function fetchPixivPage(
   const url = pixivPage(category, page);
   const response = await fetchURL(url);
 
-  const rawData = response.data;
+  const rawData = response.data as PixivPageResponse;
   if (!rawData.meta) {
     throw new Error(`Missing meta in response: ${JSON.stringify(rawData)}`);
   }
@@ -36,7 +36,7 @@ async function fetchPixivPage(
     throw new Error(`Missing articles in response: ${JSON.stringify(rawData)}`);
   }
 
-  return response.data;
+  return rawData;
 }
 
 export default fetchPixivPage;
