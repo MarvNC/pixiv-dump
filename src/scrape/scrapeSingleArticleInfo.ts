@@ -12,11 +12,17 @@ type RelatedArticle = {
   tagName?: string;
 };
 
+type ArticleNode = {
+  tag?: string;
+  text?: string;
+  children?: ArticleNode[];
+};
+
 type ArticleApi = {
   categories?: string[];
   yomigana?: string;
   abstract?: string;
-  text?: string;
+  nodes?: string;
   mainIllust?: { imageUrl?: string };
   relatedArticles?: {
     parent_article?: RelatedArticle;
@@ -103,9 +109,33 @@ function getHeaders(
   return headers;
 }
 
+function nodeText(node: ArticleNode): string {
+  if (node.children) {
+    return node.children.map(nodeText).join('');
+  }
+  return node.text || '';
+}
+
+function getFirstSectionText(nodes: string | undefined): string {
+  if (!nodes) {
+    return '';
+  }
+  const parsed = JSON.parse(nodes) as ArticleNode[];
+  const firstHeading = parsed.findIndex((node) => node.tag === 'header');
+  const afterHeading = parsed.slice(firstHeading + 1);
+  const nextHeading = afterHeading.findIndex((node) => node.tag === 'header');
+  const section =
+    nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading);
+  return section
+    .filter((node) => node.tag === 'p')
+    .map(nodeText)
+    .filter((text) => text !== '')
+    .join('\n');
+}
+
 function getMainText(article: ArticleApi): string {
   const abstract = article.abstract || '';
-  const text = article.text || '';
+  const text = getFirstSectionText(article.nodes);
   if (abstract && text) {
     return `${abstract}\n\n${text}`;
   }
