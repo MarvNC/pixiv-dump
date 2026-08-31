@@ -58,9 +58,7 @@ export type ScrapedArticle = {
 };
 
 function apiUrl(path: string, tag_name: string) {
-  return `${PIXIV_API_BASE_URL}${path}/${encodeURIComponent(
-    tag_name.replace(/\+/g, ' '),
-  )}?lang=ja`;
+  return `${PIXIV_API_BASE_URL}${path}/${encodeURIComponent(tag_name)}?lang=ja`;
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
