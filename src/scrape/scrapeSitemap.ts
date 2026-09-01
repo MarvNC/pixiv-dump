@@ -1,5 +1,9 @@
 import { prisma } from '..';
-import { SITEMAP_INDEX_URL, SITEMAP_PROGRESS_CATEGORY } from '../constants';
+import {
+  IGNORED_WAF_TAGS,
+  SITEMAP_INDEX_URL,
+  SITEMAP_PROGRESS_CATEGORY,
+} from '../constants';
 import { fetchURL } from '../fetch/fetchURL';
 import {
   getCategoryScraped,
@@ -18,6 +22,13 @@ import {
 const UPSERT_BATCH_SIZE = 50;
 
 export async function scrapeSitemap() {
+  const removed = await prisma.pixivArticle.deleteMany({
+    where: { tag_name: { in: [...IGNORED_WAF_TAGS] } },
+  });
+  if (removed.count > 0) {
+    console.log(`Removed ${removed.count} known WAF sitemap entries`);
+  }
+
   const indexResponse = await fetchURL(SITEMAP_INDEX_URL);
   if (typeof indexResponse.data !== 'string') {
     throw new Error('Sitemap index was not XML text');
@@ -69,7 +80,12 @@ async function scrapeSitemapPart(part: SitemapEntry): Promise<number> {
   }[] = [];
   for (const url of parseUrlset(response.data)) {
     const tag_name = tagNameFromArticleUrl(url.loc);
-    if (!tag_name) {
+    if (!tag_name || IGNORED_WAF_TAGS.has(tag_name)) {
+      if (tag_name && IGNORED_WAF_TAGS.has(tag_name)) {
+        console.log(
+          `Ignoring known WAF sitemap entry: ${JSON.stringify(tag_name)}`,
+        );
+      }
       continue;
     }
     articles.push({

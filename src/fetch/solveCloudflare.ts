@@ -1,4 +1,5 @@
 import { PIXIV_BASE_URL } from '../constants';
+import { CloudflareError } from './errors';
 
 type PlaywrightBrowser = import('playwright').Browser;
 type PlaywrightContext = import('playwright').BrowserContext;
@@ -76,6 +77,12 @@ function isChallengeBody(text: string): boolean {
   );
 }
 
+export function throwIfChallengeBody(url: string, text: string): void {
+  if (isChallengeBody(text)) {
+    throw new CloudflareError(`Cloudflare challenge body for ${url}`);
+  }
+}
+
 async function waitForChallengeClear(p: PlaywrightPage): Promise<void> {
   const title = await p.title().catch(() => '');
   if (!isChallengeTitle(title)) {
@@ -87,7 +94,8 @@ async function waitForChallengeClear(p: PlaywrightPage): Promise<void> {
   lastChallengeWaitMs = Date.now();
   await p.waitForFunction(
     () => {
-      const t = document.title;
+      const t = (globalThis as unknown as { document: { title: string } })
+        .document.title;
       return !/just a moment/i.test(t) && !/しばらくお待ちください/.test(t);
     },
     null,
@@ -172,20 +180,30 @@ export async function fetchWithBrowser(url: string): Promise<{
   text: string;
   contentType: string;
 }> {
-  const p = await ensureClearedPage();
-  let result = await pageFetch(p, url);
-  if (isChallengeBody(result.text)) {
-    await p.goto(url, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60_000,
-    });
-    await waitForChallengeClear(p);
-    result = await pageFetch(p, url);
+  try {
+    const p = await ensureClearedPage();
+    let result = await pageFetch(p, url);
+    if (isChallengeBody(result.text)) {
+      await p.goto(url, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60_000,
+      });
+      await waitForChallengeClear(p);
+      result = await pageFetch(p, url);
+    }
+    throwIfChallengeBody(url, result.text);
+    return result;
+  } catch (error) {
+    if (error instanceof CloudflareError) {
+      throw error;
+    }
+    const p = page && !page.isClosed() ? page : null;
+    const title = p ? await p.title().catch(() => '') : '';
+    if (isChallengeTitle(title)) {
+      throw new CloudflareError(`Cloudflare browser challenge for ${url}`);
+    }
+    throw error;
   }
-  if (isChallengeBody(result.text)) {
-    throw new Error(`Cloudflare challenge body for ${url}`);
-  }
-  return result;
 }
 
 export async function closeBrowser(): Promise<void> {

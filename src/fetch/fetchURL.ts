@@ -5,25 +5,12 @@ import {
   fetchWithBrowser,
   solveCloudflare,
 } from './solveCloudflare';
+import { CloudflareError, HttpError } from './errors';
+
+export { CloudflareError, HttpError } from './errors';
 
 const MAX_ATTEMPTS = 3;
 const REQUEST_TIMEOUT_MS = 60_000;
-
-export class HttpError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.name = 'HttpError';
-    this.status = status;
-  }
-}
-
-export class CloudflareError extends Error {
-  constructor(message = 'Blocked by Cloudflare challenge') {
-    super(message);
-    this.name = 'CloudflareError';
-  }
-}
 
 export type FetchResponse = {
   data: unknown;

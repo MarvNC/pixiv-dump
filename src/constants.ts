@@ -8,3 +8,10 @@ export const FETCH_DELAY_MS = 0;
 export const SITEMAP_INDEX_URL = `${PIXIV_BASE_URL}sitemap.xml`;
 export const SITEMAP_PROGRESS_CATEGORY = 'sitemap';
 export const PIXIV_API_BASE_URL = `${PIXIV_BASE_URL}_api`;
+
+// Pixiv's WAF intentionally challenges these three vandalism entries from the sitemap.
+export const IGNORED_WAF_TAGS = new Set([
+  '..',
+  '</title><svg onload=alert();>',
+  `'"><script>alert(1)</script>`,
+]);

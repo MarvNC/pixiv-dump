@@ -51,9 +51,9 @@ export type ScrapedArticle = {
   parent: string | null;
   related_tags: string[];
   main_illst_url: string;
-  view_count: number;
-  illust_count: number;
-  check_count: number;
+  view_count?: number;
+  illust_count?: number;
+  check_count?: number;
   updated_at: string;
 };
 
@@ -189,9 +189,9 @@ export async function scrapeSingleArticleInfo(
     parent: article.relatedArticles?.parent_article?.tagName || null,
     related_tags: relatedTagNames(article, tag_name),
     main_illst_url: article.mainIllust?.imageUrl || '',
-    view_count: info?.articleViewCount || 0,
-    illust_count: info?.pixivWorkCount || 0,
-    check_count: info?.checklistCount || 0,
+    view_count: info?.articleViewCount,
+    illust_count: info?.pixivWorkCount,
+    check_count: info?.checklistCount,
     updated_at: formatUpdatedAt(article.updatedAtTimestamp),
   };
 }
