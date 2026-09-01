@@ -7,11 +7,12 @@ import {
 } from './scrapeSingleArticleInfo';
 
 const CF_GIVE_UP_STREAK = 5;
+const RATE_LIMIT_GIVE_UP_STREAK = 5;
 
 /**
  * Scrape all readings for articles that have not been scraped yet or have been updated since the last scrape.
  */
-export async function scrapeAllIndividualArticles() {
+export async function scrapeAllIndividualArticles(): Promise<boolean> {
   // Find articles that need individual scraping:
   // 1. Articles never scraped individually (lastScrapedArticle IS NULL) - prioritized first
   // 2. Articles updated since last individual scrape (lastScraped > lastScrapedArticle)
@@ -61,6 +62,8 @@ export async function scrapeAllIndividualArticles() {
 
   let progressBarIndex = 0;
   let cfStreak = 0;
+  let rateLimitStreak = 0;
+  let completed = true;
   while (progressBarIndex < articles.length) {
     const { tag_name } = articles[progressBarIndex];
     try {
@@ -83,6 +86,7 @@ export async function scrapeAllIndividualArticles() {
         },
       });
       cfStreak = 0;
+      rateLimitStreak = 0;
     } catch (error) {
       if (error instanceof ArticleNotFoundError) {
         console.log(`Article not found, removing from database: ${tag_name}`);
@@ -91,15 +95,26 @@ export async function scrapeAllIndividualArticles() {
         });
         cfStreak = 0;
       } else if (error instanceof HttpError && error.status === 429) {
-        console.log(`HTTP 429 on ${tag_name}, waiting 20000ms`);
-        await new Promise((resolve) => setTimeout(resolve, 20_000));
-        continue;
+        rateLimitStreak++;
+        if (rateLimitStreak < RATE_LIMIT_GIVE_UP_STREAK) {
+          const waitMs = 20_000 * rateLimitStreak;
+          console.log(
+            `HTTP 429 on ${tag_name}, waiting ${waitMs}ms (streak ${rateLimitStreak})`,
+          );
+          await new Promise((resolve) => setTimeout(resolve, waitMs));
+          continue;
+        }
+        console.error(
+          `Still rate limited after ${rateLimitStreak} tries, skipping ${tag_name}`,
+        );
+        rateLimitStreak = 0;
       } else if (error instanceof CloudflareError) {
         cfStreak++;
         if (cfStreak >= CF_GIVE_UP_STREAK) {
           console.error(
             `Cloudflare still blocking after ${cfStreak} articles, stopping article scrape`,
           );
+          completed = false;
           break;
         }
         const waitMs = 10_000;
@@ -126,4 +141,5 @@ export async function scrapeAllIndividualArticles() {
   if (showBar) {
     progressBar.stop();
   }
+  return completed;
 }

@@ -26,9 +26,9 @@ export const prisma = new PrismaClient();
   }
 
   scrapeAll()
-    .then(async (totalArticles) => {
+    .then(async ({ totalArticles, completedScraping }) => {
       await exitHandler({
-        completedScraping: true,
+        completedScraping,
         totalArticles,
       });
     })
@@ -55,15 +55,19 @@ async function scrapeAll() {
   console.log(`Total articles: ${totalArticles}`);
 
   console.log('Scraping single articles');
-  await scrapeAllIndividualArticles();
-  console.log('Scraping of articles complete!');
+  const completedScraping = await scrapeAllIndividualArticles();
+  console.log(
+    completedScraping
+      ? 'Scraping of articles complete!'
+      : 'Scraping of articles stopped early',
+  );
   const individualArticlesScraped = await getArticlesScrapedCount();
   console.log(`Total articles scraped: ${individualArticlesScraped}`);
   console.log(
     `Scraped ${individualArticlesScraped - initialReadingsCount} new articles`,
   );
 
-  return totalArticles;
+  return { totalArticles, completedScraping };
 }
 
 process.on('SIGINT', () => {
