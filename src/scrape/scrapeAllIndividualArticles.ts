@@ -1,6 +1,7 @@
 import cliProgress from 'cli-progress';
 import { prisma } from '..';
-import { CloudflareError, HttpError } from '../fetch/fetchURL';
+import { IGNORED_WAF_TAGS } from '../constants';
+import { CloudflareError, HttpError } from '../fetch/errors';
 import {
   scrapeSingleArticleInfo,
   ArticleNotFoundError,
@@ -19,7 +20,9 @@ export async function scrapeAllIndividualArticles(): Promise<boolean> {
   // We need to use queryRaw because these fields are saved as strings of numbers.
 
   // Newly never-scraped articles (lastScrapedArticle IS NULL)
-  const newlyNeverScraped = await prisma.$queryRaw<Array<{ tag_name: string }>>`
+  const newlyNeverScrapedRows = await prisma.$queryRaw<
+    Array<{ tag_name: string }>
+  >`
     SELECT tag_name
     FROM PixivArticle
     WHERE lastScrapedArticle IS NULL
@@ -27,7 +30,9 @@ export async function scrapeAllIndividualArticles(): Promise<boolean> {
   `;
 
   // Updated articles (lastScrapedArticle IS NOT NULL and lastScraped > lastScrapedArticle)
-  const updatedArticles = await prisma.$queryRaw<Array<{ tag_name: string }>>`
+  const updatedArticleRows = await prisma.$queryRaw<
+    Array<{ tag_name: string }>
+  >`
     SELECT tag_name
     FROM PixivArticle
     WHERE lastScrapedArticle IS NOT NULL
@@ -38,6 +43,11 @@ export async function scrapeAllIndividualArticles(): Promise<boolean> {
     ORDER BY CAST(lastScraped AS INTEGER) ASC,
              tag_name
   `;
+
+  const isNotIgnoredWafTag = ({ tag_name }: { tag_name: string }) =>
+    !IGNORED_WAF_TAGS.has(tag_name);
+  const newlyNeverScraped = newlyNeverScrapedRows.filter(isNotIgnoredWafTag);
+  const updatedArticles = updatedArticleRows.filter(isNotIgnoredWafTag);
 
   const articles = [...newlyNeverScraped, ...updatedArticles];
 
@@ -79,9 +89,15 @@ export async function scrapeAllIndividualArticles(): Promise<boolean> {
           parent: scraped.parent,
           related_tags: JSON.stringify(scraped.related_tags),
           main_illst_url: scraped.main_illst_url,
-          view_count: scraped.view_count,
-          illust_count: scraped.illust_count,
-          check_count: scraped.check_count,
+          ...(scraped.view_count !== undefined
+            ? { view_count: scraped.view_count }
+            : {}),
+          ...(scraped.illust_count !== undefined
+            ? { illust_count: scraped.illust_count }
+            : {}),
+          ...(scraped.check_count !== undefined
+            ? { check_count: scraped.check_count }
+            : {}),
           ...(scraped.updated_at ? { updated_at: scraped.updated_at } : {}),
         },
       });

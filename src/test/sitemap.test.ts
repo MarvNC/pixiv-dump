@@ -1,4 +1,5 @@
 import { test, expect } from 'bun:test';
+import { IGNORED_WAF_TAGS } from '../constants';
 import {
   isJapaneseSitemapPart,
   lastmodToEpochMs,
@@ -43,4 +44,12 @@ test('parseUrlset extracts article tags and lastmod', () => {
   expect(lastmodToEpochMs(entries[0].lastmod)).toBe(
     new Date('2026-04-19T18:25:09+09:00').getTime(),
   );
+});
+
+test('the known WAF vandalism tags are explicitly ignored', () => {
+  expect([...IGNORED_WAF_TAGS]).toEqual([
+    '..',
+    '</title><svg onload=alert();>',
+    `'"><script>alert(1)</script>`,
+  ]);
 });
