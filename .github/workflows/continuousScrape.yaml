@@ -42,12 +42,24 @@ jobs:
             exit 0
           fi
           while : ; do
-            STATUS=$(curl --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID" \
-              | jq -r '.status // empty')
+            RUN_JSON=$(curl --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID")
+            STATUS=$(echo "$RUN_JSON" | jq -r '.status // empty')
             echo "Previous run status: $STATUS"
             if [[ "$STATUS" == "completed" || -z "$STATUS" ]]; then
               break
+            fi
+            if [[ "$STATUS" == "queued" ]]; then
+              CREATED_AT=$(echo "$RUN_JSON" | jq -r '.created_at // empty')
+              CREATED_EPOCH=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
+              AGE_SECONDS=$(($(date +%s) - CREATED_EPOCH))
+              JOB_COUNT=$(curl --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs?per_page=1" \
+                | jq '.total_count // 0')
+              if (( JOB_COUNT == 0 && AGE_SECONDS >= 900 )); then
+                echo "Ignoring stale queued previous run $RUN_ID with no jobs after ${AGE_SECONDS}s"
+                break
+              fi
             fi
             echo "Waiting for the previous run to complete..."
             sleep 60
