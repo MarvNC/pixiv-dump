@@ -109,8 +109,6 @@ jobs:
 
       - name: Scrape
         if: steps.budget.outputs.enough == 'true'
-        env:
-          PIXIV_PROXY: ${{ secrets.PIXIV_PROXY }}
         run:
           xvfb-run -a bun src/index.ts --timeout=${{
           steps.get_ms_until_nextrun.outputs.ms }}

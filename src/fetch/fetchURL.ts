@@ -36,10 +36,6 @@ let fetchQueue: Promise<unknown> = Promise.resolve();
 let useBrowserFetch = false;
 
 function sessionOptions() {
-  const proxy =
-    process.env.PIXIV_PROXY ||
-    process.env.HTTPS_PROXY ||
-    process.env.HTTP_PROXY;
   return {
     browser: 'chrome' as const,
     os: 'windows' as const,
@@ -47,7 +43,6 @@ function sessionOptions() {
     defaultHeaders: {
       Referer: 'https://dic.pixiv.net/',
     },
-    ...(proxy ? { proxy } : {}),
   };
 }
 
