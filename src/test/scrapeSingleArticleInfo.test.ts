@@ -21,4 +21,4 @@ test('scrapeSingleArticleInfo should not return null values for フリーレン'
   expect(mainText).toBeTruthy();
   expect(Array.isArray(header)).toBe(true);
   expect(header.length).toBeGreaterThan(0);
-});
+}, 90_000);

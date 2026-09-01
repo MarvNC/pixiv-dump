@@ -3,8 +3,9 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import fs from 'fs';
 import { scrapeAllIndividualArticles } from './scrape/scrapeAllIndividualArticles';
-import { scrapeAllCategories } from './scrape/scrapeAllCategories';
+import { scrapeSitemap } from './scrape/scrapeSitemap';
 import { getArticlesScrapedCount } from './helpers/getArticlesWithReadingsCount';
+import { closeSession } from './fetch/fetchURL';
 
 export const prisma = new PrismaClient();
 
@@ -18,23 +19,22 @@ export const prisma = new PrismaClient();
 
   if (timeout) {
     console.log(`Timeout set to ${timeout} milliseconds`);
-    setTimeout(async () => {
+    setTimeout(() => {
       console.log('Timeout reached. Exiting program');
-      exitHandler();
-      process.exit(0);
+      void exitHandler();
     }, timeout);
   }
 
   scrapeAll()
-    .then(async (totalArticles) => {
-      exitHandler({
-        completedScraping: true,
+    .then(async ({ totalArticles, completedScraping }) => {
+      await exitHandler({
+        completedScraping,
         totalArticles,
       });
     })
     .catch(async (e) => {
       console.error(e);
-      exitHandler({ code: 1 });
+      await exitHandler({ code: 1 });
     });
 })();
 
@@ -48,35 +48,43 @@ async function scrapeAll() {
   const initialReadingsCount = await getArticlesScrapedCount();
   console.log(`${initialReadingsCount} articles with readings.`);
 
-  await scrapeAllCategories();
-  console.log('Scraping of article summaries complete');
+  console.log('Scraping sitemap');
+  await scrapeSitemap();
+  console.log('Scraping of sitemap complete');
   const totalArticles = await prisma.pixivArticle.count();
   console.log(`Total articles: ${totalArticles}`);
 
   console.log('Scraping single articles');
-  await scrapeAllIndividualArticles();
-  console.log('Scraping of articles complete!');
+  const completedScraping = await scrapeAllIndividualArticles();
+  console.log(
+    completedScraping
+      ? 'Scraping of articles complete!'
+      : 'Scraping of articles stopped early',
+  );
   const individualArticlesScraped = await getArticlesScrapedCount();
   console.log(`Total articles scraped: ${individualArticlesScraped}`);
   console.log(
     `Scraped ${individualArticlesScraped - initialReadingsCount} new articles`,
   );
 
-  return totalArticles;
+  return { totalArticles, completedScraping };
 }
 
-process.on('SIGINT', async () => {
+process.on('SIGINT', () => {
   console.log(
     'Received SIGINT signal. Disconnecting Prisma and exiting program',
   );
-  exitHandler();
+  void exitHandler();
 });
 
-/**
- * Disconnect Prisma and exit the program
- * @param code Exit code
- */
-function exitHandler({
+process.on('SIGTERM', () => {
+  console.log(
+    'Received SIGTERM signal. Disconnecting Prisma and exiting program',
+  );
+  void exitHandler();
+});
+
+async function exitHandler({
   code = 0,
   completedScraping = false,
   totalArticles = 0,
@@ -86,10 +94,19 @@ function exitHandler({
   totalArticles?: number;
 } = {}) {
   console.log('Exiting program');
-  prisma.$disconnect();
+  try {
+    await prisma.$queryRawUnsafe('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch (error) {
+    console.error(error);
+  }
+  try {
+    await prisma.$disconnect();
+  } catch (error) {
+    console.error(error);
+  }
+  await closeSession();
   if (completedScraping) {
     console.log(`Scraped ${totalArticles} articles`);
-    // Write to total.txt
     fs.writeFileSync('total.txt', totalArticles.toString());
   }
   process.exit(code);
