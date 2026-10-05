@@ -123,6 +123,11 @@ function toFetchResponse(
   };
 }
 
+async function fetchBrowserResponse(url: string): Promise<FetchResponse> {
+  const response = await fetchWithBrowser(url);
+  return toFetchResponse(response.status, response.text, response.contentType);
+}
+
 async function fetchURLInner(url: string): Promise<FetchResponse> {
   if (FETCH_DELAY_MS > 0) {
     await sleep(FETCH_DELAY_MS);
@@ -132,12 +137,7 @@ async function fetchURLInner(url: string): Promise<FetchResponse> {
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
       if (useBrowserFetch) {
-        const browserResponse = await fetchWithBrowser(url);
-        return toFetchResponse(
-          browserResponse.status,
-          browserResponse.text,
-          browserResponse.contentType,
-        );
+        return await fetchBrowserResponse(url);
       }
       const current = await getSession();
       const response = await current.fetch(url);
@@ -150,7 +150,8 @@ async function fetchURLInner(url: string): Promise<FetchResponse> {
         const solved = await solveCloudflare();
         if (solved) {
           useBrowserFetch = true;
-          continue;
+          // Complete this attempt, including when it is the final one.
+          return await fetchBrowserResponse(url);
         }
         await sleep(5000 * 3 ** attempt);
         continue;
