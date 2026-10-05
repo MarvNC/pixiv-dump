@@ -5,6 +5,9 @@ type PlaywrightBrowser = import('playwright').Browser;
 type PlaywrightContext = import('playwright').BrowserContext;
 type PlaywrightPage = import('playwright').Page;
 
+const PAGE_READY_TIMEOUT_MS = 15_000;
+const MAX_NAVIGATION_ATTEMPTS = 3;
+
 let browser: PlaywrightBrowser | null = null;
 let context: PlaywrightContext | null = null;
 let page: PlaywrightPage | null = null;
@@ -84,7 +87,7 @@ export function throwIfChallengeBody(url: string, text: string): void {
 }
 
 async function waitForChallengeClear(p: PlaywrightPage): Promise<void> {
-  const title = await p.title().catch(() => '');
+  const title = await p.title();
   if (!isChallengeTitle(title)) {
     return;
   }
@@ -114,14 +117,64 @@ async function waitForPixivSession(timeoutMs: number): Promise<boolean> {
   return hasPixivSession();
 }
 
-async function ensureClearedPage(): Promise<PlaywrightPage> {
-  const p = await getPage();
-  const title = await p.title().catch(() => '');
-  const onSite = p.url().startsWith(PIXIV_BASE_URL);
-  if (onSite && !isChallengeTitle(title) && (await hasPixivSession())) {
-    return p;
+async function waitForReadyPage(p: PlaywrightPage): Promise<void> {
+  await p.waitForLoadState('domcontentloaded', {
+    timeout: PAGE_READY_TIMEOUT_MS,
+  });
+  const ready = await p.waitForFunction(
+    (baseUrl) => {
+      const { document, location } = globalThis as unknown as {
+        document: { title: string; readyState: string };
+        location: { href: string; pathname: string };
+      };
+      // A clearance cookie may precede the navigation to the real document.
+      // JSON/XML fallback pages can legitimately have no title; the homepage cannot.
+      return (
+        location.href.startsWith(baseUrl) &&
+        document.readyState !== 'loading' &&
+        (document.title.trim() !== '' || location.pathname !== '/') &&
+        !/^\s*Loading(?:\s|$)/i.test(document.title)
+      );
+    },
+    PIXIV_BASE_URL,
+    { timeout: PAGE_READY_TIMEOUT_MS },
+  );
+  await ready.dispose();
+  if (isChallengeTitle(await p.title())) {
+    throw new CloudflareError(`Cloudflare browser challenge for ${p.url()}`);
   }
-  if (!onSite) {
+}
+
+async function retryAfterNavigation<T>(
+  p: PlaywrightPage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (
+        attempt >= MAX_NAVIGATION_ATTEMPTS ||
+        p.isClosed() ||
+        !(error instanceof Error) ||
+        !/Execution context was destroyed|Cannot find context with specified id/.test(
+          error.message,
+        )
+      ) {
+        throw error;
+      }
+      // Readiness and evaluate cannot be atomic. Let an in-flight navigation
+      // settle, then recheck the page before retrying this read-only fetch.
+      await p.waitForLoadState('domcontentloaded', {
+        timeout: PAGE_READY_TIMEOUT_MS,
+      });
+      await p.waitForTimeout(250);
+    }
+  }
+}
+
+async function ensureClearedPage(p: PlaywrightPage): Promise<void> {
+  if (!p.url().startsWith(PIXIV_BASE_URL)) {
     await p.goto(PIXIV_BASE_URL, {
       waitUntil: 'domcontentloaded',
       timeout: 60_000,
@@ -129,7 +182,7 @@ async function ensureClearedPage(): Promise<PlaywrightPage> {
   }
   await waitForChallengeClear(p);
   await waitForPixivSession(15_000);
-  return p;
+  await waitForReadyPage(p);
 }
 
 async function pageFetch(
@@ -148,23 +201,26 @@ async function pageFetch(
 
 export async function solveCloudflare(): Promise<boolean> {
   try {
-    const p = await ensureClearedPage();
-    const names = await cookieNames();
-    const title = await p.title().catch(() => '');
-    const ready = await hasPixivSession();
-    console.log(
-      `Cloudflare browser solve ${ready ? 'ok' : 'not ready'} title=${JSON.stringify(
-        title,
-      )} cookies=${names.join(', ')} page=${p.url()}`,
-    );
-    return ready;
-  } catch (error) {
-    if (await hasPixivSession()) {
+    const p = await getPage();
+    return await retryAfterNavigation(p, async () => {
+      await ensureClearedPage(p);
+      const names = await cookieNames();
+      const title = await p.title();
+      const url = p.url();
+      const ready =
+        url.startsWith(PIXIV_BASE_URL) &&
+        !isChallengeTitle(title) &&
+        !/^\s*Loading(?:\s|$)/i.test(title) &&
+        (title.trim() !== '' || new URL(url).pathname !== '/') &&
+        (await hasPixivSession());
       console.log(
-        'Cloudflare browser solve timed out but pixiv session is set',
+        `Cloudflare browser solve ${ready ? 'ok' : 'not ready'} title=${JSON.stringify(
+          title,
+        )} cookies=${names.join(', ')} page=${url}`,
       );
-      return true;
-    }
+      return ready;
+    });
+  } catch (error) {
     const p = page && !page.isClosed() ? page : null;
     const title = p ? await p.title().catch(() => '') : '';
     const url = p ? p.url() : '';
@@ -181,18 +237,22 @@ export async function fetchWithBrowser(url: string): Promise<{
   contentType: string;
 }> {
   try {
-    const p = await ensureClearedPage();
-    let result = await pageFetch(p, url);
-    if (isChallengeBody(result.text)) {
-      await p.goto(url, {
-        waitUntil: 'domcontentloaded',
-        timeout: 60_000,
-      });
-      await waitForChallengeClear(p);
-      result = await pageFetch(p, url);
-    }
-    throwIfChallengeBody(url, result.text);
-    return result;
+    const p = await getPage();
+    return await retryAfterNavigation(p, async () => {
+      await ensureClearedPage(p);
+      let result = await pageFetch(p, url);
+      if (isChallengeBody(result.text)) {
+        await p.goto(url, {
+          waitUntil: 'domcontentloaded',
+          timeout: 60_000,
+        });
+        await waitForChallengeClear(p);
+        await waitForReadyPage(p);
+        result = await pageFetch(p, url);
+      }
+      throwIfChallengeBody(url, result.text);
+      return result;
+    });
   } catch (error) {
     if (error instanceof CloudflareError) {
       throw error;
