@@ -30,6 +30,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
@@ -42,5 +43,8 @@ jobs:
       - name: Install Dependencies
         run: bun install
 
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+
       - name: Run Tests
-        run: bun test
+        run: xvfb-run -a bun test
