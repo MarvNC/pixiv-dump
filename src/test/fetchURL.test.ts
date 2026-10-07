@@ -248,3 +248,58 @@ test('ordinary HTTP 404 responses still fail without a browser handshake', async
   expect(solveCloudflare).not.toHaveBeenCalled();
   expect(fetchWithBrowser).not.toHaveBeenCalled();
 });
+
+test('waits out the challenge cooldown before spending the final browser attempt', async () => {
+  solveCloudflare.mockResolvedValueOnce(false);
+  fetchWithBrowser.mockRejectedValueOnce(
+    new CloudflareError('Sitemap challenge is still cooling down', 55_000),
+  );
+
+  expect(await fetchURL(TARGET_URL)).toEqual({
+    status: 200,
+    data: { tag_name: 'example' },
+  });
+  expect(fixture.fetch).toHaveBeenCalledTimes(2);
+  expect(solveCloudflare).toHaveBeenCalledTimes(2);
+  expect(fetchWithBrowser).toHaveBeenCalledTimes(2);
+  expect(timer.mock.calls.map((call) => call[1])).toEqual([5000, 55_000]);
+  expect(closeBrowser).not.toHaveBeenCalled();
+});
+
+test('backs off browser failures without sleeping after the final attempt', async () => {
+  const error = new CloudflareError('Persistent challenge', 60_000);
+  fetchWithBrowser.mockRejectedValue(error);
+
+  await expect(fetchURL(TARGET_URL)).rejects.toBe(error);
+  expect(fetchWithBrowser).toHaveBeenCalledTimes(3);
+  expect(timer.mock.calls.map((call) => call[1])).toEqual([60_000, 60_000]);
+});
+
+test('uses bounded backoff for unhinted browser errors', async () => {
+  const error = new TypeError('page.evaluate: Failed to fetch');
+  fetchWithBrowser.mockRejectedValue(error);
+
+  await expect(fetchURL(TARGET_URL)).rejects.toBe(error);
+  expect(fetchWithBrowser).toHaveBeenCalledTimes(3);
+  expect(timer.mock.calls.map((call) => call[1])).toEqual([5000, 15_000]);
+});
+
+test('a smaller cooldown hint does not shorten ordinary browser backoff', async () => {
+  fetchWithBrowser.mockRejectedValueOnce(new CloudflareError('Challenge', 1));
+
+  expect(await fetchURL(TARGET_URL)).toEqual({
+    status: 200,
+    data: { tag_name: 'example' },
+  });
+  expect(timer.mock.calls.map((call) => call[1])).toEqual([5000]);
+});
+
+test('a hinted failure on the final handoff adds neither a sleep nor an attempt', async () => {
+  solveCloudflare.mockResolvedValueOnce(false).mockResolvedValueOnce(false);
+  const error = new CloudflareError('Still challenged', 180_000);
+  fetchWithBrowser.mockRejectedValue(error);
+
+  await expect(fetchURL(TARGET_URL)).rejects.toBe(error);
+  expect(fetchWithBrowser).toHaveBeenCalledTimes(1);
+  expect(timer.mock.calls.map((call) => call[1])).toEqual([5000, 15_000]);
+});

@@ -7,12 +7,27 @@ type PlaywrightPage = import('playwright').Page;
 
 const PAGE_READY_TIMEOUT_MS = 15_000;
 const MAX_NAVIGATION_ATTEMPTS = 3;
+const CHALLENGE_WAIT_COOLDOWN_MS = 180_000;
 
 let browser: PlaywrightBrowser | null = null;
 let context: PlaywrightContext | null = null;
 let page: PlaywrightPage | null = null;
 let launchPromise: Promise<PlaywrightContext> | null = null;
-let lastChallengeWaitMs = 0;
+let lastChallengeWaitMs: number | null = null;
+
+function browserChallengeError(message: string): CloudflareError {
+  const retryAfterMs =
+    lastChallengeWaitMs === null
+      ? 0
+      : Math.max(
+          0,
+          Math.min(
+            CHALLENGE_WAIT_COOLDOWN_MS,
+            CHALLENGE_WAIT_COOLDOWN_MS - (Date.now() - lastChallengeWaitMs),
+          ),
+        );
+  return new CloudflareError(message, retryAfterMs);
+}
 
 async function getContext(): Promise<PlaywrightContext> {
   if (context) {
@@ -82,7 +97,7 @@ function isChallengeBody(text: string): boolean {
 
 export function throwIfChallengeBody(url: string, text: string): void {
   if (isChallengeBody(text)) {
-    throw new CloudflareError(`Cloudflare challenge body for ${url}`);
+    throw browserChallengeError(`Cloudflare challenge body for ${url}`);
   }
 }
 
@@ -91,8 +106,12 @@ async function waitForChallengeClear(p: PlaywrightPage): Promise<void> {
   if (!isChallengeTitle(title)) {
     return;
   }
-  if (Date.now() - lastChallengeWaitMs < 180_000) {
-    return;
+  const cooldownError = browserChallengeError(
+    `Cloudflare browser challenge for ${p.url()}`,
+  );
+  if (cooldownError.retryAfterMs > 0) {
+    // Do not spend a fetch attempt checking the same blocked page immediately.
+    throw cooldownError;
   }
   lastChallengeWaitMs = Date.now();
   await p.waitForFunction(
@@ -141,7 +160,7 @@ async function waitForReadyPage(p: PlaywrightPage): Promise<void> {
   );
   await ready.dispose();
   if (isChallengeTitle(await p.title())) {
-    throw new CloudflareError(`Cloudflare browser challenge for ${p.url()}`);
+    throw browserChallengeError(`Cloudflare browser challenge for ${p.url()}`);
   }
 }
 
@@ -260,14 +279,14 @@ export async function fetchWithBrowser(url: string): Promise<{
     const p = page && !page.isClosed() ? page : null;
     const title = p ? await p.title().catch(() => '') : '';
     if (isChallengeTitle(title)) {
-      throw new CloudflareError(`Cloudflare browser challenge for ${url}`);
+      throw browserChallengeError(`Cloudflare browser challenge for ${url}`);
     }
     throw error;
   }
 }
 
 export async function closeBrowser(): Promise<void> {
-  lastChallengeWaitMs = 0;
+  lastChallengeWaitMs = null;
   launchPromise = null;
   const currentPage = page;
   const currentContext = context;
