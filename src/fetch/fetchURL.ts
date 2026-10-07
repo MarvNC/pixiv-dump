@@ -174,6 +174,14 @@ async function fetchURLInner(url: string): Promise<FetchResponse> {
       lastError = error;
       if (useBrowserFetch) {
         console.log(`Browser fetch failed for ${url}: ${error}`);
+        if (attempt + 1 < MAX_ATTEMPTS) {
+          const delayMs = Math.max(
+            5000 * 3 ** attempt,
+            error instanceof CloudflareError ? error.retryAfterMs : 0,
+          );
+          console.log(`Waiting ${delayMs}ms before the next browser attempt`);
+          await sleep(delayMs);
+        }
         continue;
       }
       await closeSession();

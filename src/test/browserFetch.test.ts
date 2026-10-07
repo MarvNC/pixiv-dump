@@ -287,3 +287,71 @@ for (const finalTitle of [`Loading ${PIXIV_BASE_URL}`, 'Access Denied', '']) {
     expect(fixture.page.evaluate).not.toHaveBeenCalled();
   });
 }
+
+test('a sitemap challenge after a timed-out homepage wait carries its remaining cooldown', async () => {
+  let now = 1_000_000;
+  const clock = spyOn(Date, 'now').mockImplementation(() => now);
+  const waitForFunction = fixture.page.waitForFunction.getMockImplementation()!;
+  fixture.document.title = 'Just a moment...';
+  fixture.page.waitForFunction.mockImplementationOnce(async () => {
+    now += 120_000;
+    throw timeoutError();
+  });
+  try {
+    expect(await solveCloudflare()).toBe(false);
+    now += 5000;
+    fixture.document.title = PAGE_TITLE;
+    expect(await solveCloudflare()).toBe(true);
+    fixture.page.evaluate.mockResolvedValueOnce({
+      ...RESPONSE,
+      text: CHALLENGE_BODY,
+    });
+    fixture.page.goto.mockImplementation(async () => {
+      fixture.location.href = TARGET_URL;
+      fixture.location.pathname = '/sitemap.xml';
+      fixture.document.title = 'Just a moment...';
+    });
+
+    await expect(fetchWithBrowser(TARGET_URL)).rejects.toMatchObject({
+      name: 'CloudflareError',
+      retryAfterMs: 55_000,
+    });
+    expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
+    now += 55_000;
+    fixture.page.waitForFunction.mockImplementation(async (...args) => {
+      if (args[2].timeout === 120_000) {
+        fixture.document.title = '';
+      }
+      return waitForFunction(...args);
+    });
+    expect(await fetchWithBrowser(TARGET_URL)).toEqual(RESPONSE);
+    expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+test('a browser challenge timeout preserves the remaining cooldown in its error', async () => {
+  let now = 1_000_000;
+  const clock = spyOn(Date, 'now').mockImplementation(() => now);
+  fixture.document.title = 'Just a moment...';
+  fixture.page.waitForFunction.mockImplementationOnce(async () => {
+    now += 120_000;
+    throw timeoutError();
+  });
+  try {
+    await expect(fetchWithBrowser(TARGET_URL)).rejects.toMatchObject({
+      name: 'CloudflareError',
+      retryAfterMs: 60_000,
+    });
+    now += 59_999;
+    await expect(fetchWithBrowser(TARGET_URL)).rejects.toMatchObject({
+      name: 'CloudflareError',
+      retryAfterMs: 1,
+    });
+    expect(fixture.page.waitForFunction).toHaveBeenCalledTimes(1);
+    expect(fixture.page.evaluate).not.toHaveBeenCalled();
+  } finally {
+    clock.mockRestore();
+  }
+});
