@@ -1,10 +1,17 @@
-import { CloudflareError, fetchURL, HttpError } from '../fetch/fetchURL';
+import { fetchURL, HttpError } from '../fetch/fetchURL';
 import { PIXIV_API_BASE_URL } from '../constants';
 
 export class ArticleNotFoundError extends Error {
   constructor(tag_name: string) {
     super(`Article not found: ${tag_name}`);
     this.name = 'ArticleNotFoundError';
+  }
+}
+
+export class ArticleSchemaError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArticleSchemaError';
   }
 }
 
@@ -61,9 +68,128 @@ function apiUrl(path: string, tag_name: string) {
   return `${PIXIV_API_BASE_URL}${path}/${encodeURIComponent(tag_name)}?lang=ja`;
 }
 
-async function fetchJson<T>(url: string): Promise<T> {
+async function fetchJson(url: string): Promise<unknown> {
   const response = await fetchURL(url);
-  return response.data as T;
+  return response.data;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireShape(condition: boolean, message: string): asserts condition {
+  if (!condition) {
+    throw new ArticleSchemaError(message);
+  }
+}
+
+function optionalString(value: unknown): boolean {
+  return value == null || typeof value === 'string';
+}
+
+function validRelatedArticle(value: unknown): boolean {
+  return isRecord(value) && optionalString(value.tagName);
+}
+
+function parseArticleResponse(value: unknown): ArticleApi {
+  requireShape(isRecord(value), 'Article response must be an object');
+  const knownFields = [
+    'categories',
+    'yomigana',
+    'abstract',
+    'nodes',
+    'mainIllust',
+    'relatedArticles',
+    'updatedAtTimestamp',
+  ];
+  requireShape(
+    knownFields.some((field) => Object.hasOwn(value, field)),
+    'Article response has no recognized fields',
+  );
+  for (const field of ['yomigana', 'abstract', 'nodes']) {
+    requireShape(
+      optionalString(value[field]),
+      `Article ${field} must be a string`,
+    );
+  }
+  requireShape(
+    value.categories == null ||
+      (Array.isArray(value.categories) &&
+        value.categories.every((category) => typeof category === 'string')),
+    'Article categories must be a string array',
+  );
+  requireShape(
+    value.mainIllust == null ||
+      (isRecord(value.mainIllust) && optionalString(value.mainIllust.imageUrl)),
+    'Article illustration must contain a string URL',
+  );
+  if (value.relatedArticles != null) {
+    const related = value.relatedArticles;
+    requireShape(isRecord(related), 'Article relationships must be an object');
+    requireShape(
+      related.parent_article == null ||
+        validRelatedArticle(related.parent_article),
+      'Article parent must contain a string tag',
+    );
+    for (const field of ['child_articles', 'sibling_articles']) {
+      const articles = related[field];
+      requireShape(
+        articles == null ||
+          (Array.isArray(articles) && articles.every(validRelatedArticle)),
+        `Article ${field} must contain related articles`,
+      );
+    }
+  }
+  requireShape(
+    value.updatedAtTimestamp == null ||
+      (typeof value.updatedAtTimestamp === 'number' &&
+        Number.isFinite(value.updatedAtTimestamp) &&
+        Number.isFinite(new Date(value.updatedAtTimestamp * 1000).getTime())),
+    'Article update timestamp must be a valid Unix timestamp',
+  );
+  return value as ArticleApi;
+}
+
+function parseBreadcrumbsResponse(value: unknown): BreadcrumbItem[] {
+  requireShape(
+    Array.isArray(value) &&
+      value.every((item) => isRecord(item) && typeof item.tagName === 'string'),
+    'Breadcrumb response must be an array of tag names',
+  );
+  return value as BreadcrumbItem[];
+}
+
+function parseInfoResponse(value: unknown): ArticleInfoApi {
+  requireShape(isRecord(value), 'Article info response must be an object');
+  const fields = ['articleViewCount', 'pixivWorkCount', 'checklistCount'];
+  requireShape(
+    fields.some((field) => Object.hasOwn(value, field)),
+    'Article info response has no recognized counts',
+  );
+  for (const field of fields) {
+    const count = value[field];
+    requireShape(
+      count == null ||
+        (typeof count === 'number' &&
+          Number.isSafeInteger(count) &&
+          count >= 0),
+      `Article info ${field} must be a nonnegative integer`,
+    );
+  }
+  return value as ArticleInfoApi;
+}
+
+function validateNodes(value: unknown): asserts value is ArticleNode[] {
+  requireShape(Array.isArray(value), 'Article nodes must be an array');
+  for (const node of value) {
+    requireShape(
+      isRecord(node) && optionalString(node.tag) && optionalString(node.text),
+      'Article node must contain string tag and text fields',
+    );
+    if (node.children != null) {
+      validateNodes(node.children);
+    }
+  }
 }
 
 function relatedTagNames(article: ArticleApi, tag_name: string): string[] {
@@ -118,7 +244,8 @@ function getFirstSectionText(nodes: string | undefined): string {
   if (!nodes) {
     return '';
   }
-  const parsed = JSON.parse(nodes) as ArticleNode[];
+  const parsed: unknown = JSON.parse(nodes);
+  validateNodes(parsed);
   const firstHeading = parsed.findIndex((node) => node.tag === 'header');
   const afterHeading = parsed.slice(firstHeading + 1);
   const nextHeading = afterHeading.findIndex((node) => node.tag === 'header');
@@ -157,23 +284,27 @@ export async function scrapeSingleArticleInfo(
   tag_name: string,
 ): Promise<ScrapedArticle> {
   let article: ArticleApi;
+  let mainText: string;
   let breadcrumbs: BreadcrumbItem[] | null;
   let info: ArticleInfoApi | null;
   const ignoreOptional = (error: unknown) => {
-    if (error instanceof CloudflareError) {
-      throw error;
+    if (error instanceof HttpError && error.status === 404) {
+      return null;
     }
-    return null;
+    throw error;
   };
 
   try {
-    article = await fetchJson<ArticleApi>(apiUrl('/get_article', tag_name));
-    breadcrumbs = await fetchJson<BreadcrumbItem[]>(
-      apiUrl('/get_breadcrumbs', tag_name),
-    ).catch(ignoreOptional);
-    info = await fetchJson<ArticleInfoApi>(
-      apiUrl('/get_article_info', tag_name),
-    ).catch(ignoreOptional);
+    article = parseArticleResponse(
+      await fetchJson(apiUrl('/get_article', tag_name)),
+    );
+    mainText = getMainText(article);
+    breadcrumbs = await fetchJson(apiUrl('/get_breadcrumbs', tag_name))
+      .then(parseBreadcrumbsResponse)
+      .catch(ignoreOptional);
+    info = await fetchJson(apiUrl('/get_article_info', tag_name))
+      .then(parseInfoResponse)
+      .catch(ignoreOptional);
   } catch (error) {
     if (error instanceof HttpError && error.status === 404) {
       throw new ArticleNotFoundError(tag_name);
@@ -184,14 +315,14 @@ export async function scrapeSingleArticleInfo(
   return {
     reading: article.yomigana || '',
     header: getHeaders(breadcrumbs, article.categories, tag_name),
-    mainText: getMainText(article),
+    mainText,
     summary: article.abstract || '',
     parent: article.relatedArticles?.parent_article?.tagName || null,
     related_tags: relatedTagNames(article, tag_name),
     main_illst_url: article.mainIllust?.imageUrl || '',
-    view_count: info?.articleViewCount,
-    illust_count: info?.pixivWorkCount,
-    check_count: info?.checklistCount,
+    view_count: info?.articleViewCount ?? undefined,
+    illust_count: info?.pixivWorkCount ?? undefined,
+    check_count: info?.checklistCount ?? undefined,
     updated_at: formatUpdatedAt(article.updatedAtTimestamp),
   };
 }

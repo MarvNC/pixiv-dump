@@ -1,0 +1,71 @@
+{
+  "tagName": "フリーレン",
+  "responses": {
+    "get_article": {
+      "categories": ["予備カテゴリ"],
+      "yomigana": "ふりーれん",
+      "abstract": "パーサーの回帰テスト用の要約。",
+      "nodes": "[{\"tag\":\"p\",\"children\":[{\"text\":\"見出しより前の文は含めない。\"}]},{\"tag\":\"header\",\"children\":[{\"text\":\"概要\"}]},{\"tag\":\"p\",\"children\":[{\"text\":\"これは\"},{\"tag\":\"a\",\"children\":[{\"text\":\"入れ子の\"},{\"tag\":\"strong\",\"children\":[{\"text\":\"本文\"}]}]},{\"text\":\"です。\"}]},{\"tag\":\"p\",\"children\":[]},{\"tag\":\"table\",\"children\":[{\"text\":\"表の内容は含めない。\"}]},{\"tag\":\"p\",\"text\":\"二段落目。\"},{\"tag\":\"header\",\"text\":\"次の節\"},{\"tag\":\"p\",\"text\":\"次の節は含めない。\"}]",
+      "mainIllust": {
+        "imageUrl": "https://example.invalid/fixture-illustration.jpg"
+      },
+      "relatedArticles": {
+        "parent_article": {
+          "tagName": "親記事"
+        },
+        "child_articles": [
+          {
+            "tagName": "子記事"
+          },
+          {
+            "tagName": "フリーレン"
+          },
+          {
+            "tagName": "親記事"
+          },
+          {
+            "tagName": ""
+          },
+          {}
+        ],
+        "sibling_articles": [
+          {
+            "tagName": "関連記事"
+          },
+          {
+            "tagName": "子記事"
+          }
+        ]
+      },
+      "updatedAtTimestamp": 1704038400
+    },
+    "get_breadcrumbs": [
+      {
+        "tagName": "百科事典",
+        "url": "/a/百科事典"
+      },
+      {
+        "tagName": "親記事",
+        "url": "/a/親記事"
+      }
+    ],
+    "get_article_info": {
+      "articleViewCount": 1234,
+      "pixivWorkCount": 56,
+      "checklistCount": 7
+    }
+  },
+  "expected": {
+    "reading": "ふりーれん",
+    "header": ["百科事典", "親記事", "フリーレン"],
+    "mainText": "パーサーの回帰テスト用の要約。\n\nこれは入れ子の本文です。\n二段落目。",
+    "summary": "パーサーの回帰テスト用の要約。",
+    "parent": "親記事",
+    "related_tags": ["親記事", "子記事", "関連記事"],
+    "main_illst_url": "https://example.invalid/fixture-illustration.jpg",
+    "view_count": 1234,
+    "illust_count": 56,
+    "check_count": 7,
+    "updated_at": "2024-01-01 01:00:00"
+  }
+}

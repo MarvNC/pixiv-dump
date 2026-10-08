@@ -5,12 +5,20 @@ import {
   fetchWithBrowser,
   solveCloudflare,
 } from './solveCloudflare';
-import { CloudflareError, HttpError } from './errors';
+import {
+  CloudflareError,
+  HttpError,
+  FetchSetupError,
+  FetchCleanupError,
+  FetchTimeoutError,
+  fetchErrorCategory,
+  isTransientFetchError,
+} from './errors';
+import { FetchBudget, REQUEST_TIMEOUT_MS } from './budget';
 
 export { CloudflareError, HttpError } from './errors';
 
 const MAX_ATTEMPTS = 3;
-const REQUEST_TIMEOUT_MS = 60_000;
 
 export type FetchResponse = {
   data: unknown;
@@ -33,38 +41,64 @@ function sessionOptions() {
   };
 }
 
-async function getSession(): Promise<Session> {
+async function getSession(budget: FetchBudget): Promise<Session> {
   if (session && !session.closed) {
     return session;
   }
   if (!sessionPromise) {
-    sessionPromise = createSession(sessionOptions())
-      .then((created) => {
-        session = created;
-        return created;
-      })
-      .catch((error) => {
-        sessionPromise = null;
-        throw error;
-      });
+    const pending = createSession(sessionOptions()).then(async (created) => {
+      // A timed-out setup must not repopulate a closed/replaced session.
+      if (sessionPromise !== pending || budget.remainingMs() === 0) {
+        void created.close().catch(() => undefined);
+        throw new FetchTimeoutError(true);
+      }
+      session = created;
+      return created;
+    });
+    sessionPromise = pending;
   }
-  return sessionPromise;
+  try {
+    return await budget.run(() => sessionPromise!, REQUEST_TIMEOUT_MS);
+  } catch (error) {
+    sessionPromise = null;
+    if (error instanceof FetchTimeoutError && error.budgetExhausted)
+      throw error;
+    throw new FetchSetupError(error);
+  }
 }
 
-export async function closeSession(): Promise<void> {
-  useBrowserFetch = false;
+async function closeHttpSession(): Promise<void> {
   sessionPromise = null;
   const current = session;
   session = null;
-  if (current && !current.closed) {
-    await current.close();
+  if (current && !current.closed) await current.close();
+}
+
+export async function closeSession(
+  cleanup = new FetchBudget(5000),
+): Promise<void> {
+  useBrowserFetch = false;
+  // Attempt every cleanup even if another fails, but never hang the CLI.
+  try {
+    const results = await cleanup.run(() =>
+      Promise.allSettled([
+        Promise.resolve().then(closeHttpSession),
+        Promise.resolve().then(() => closeBrowser(cleanup)),
+      ]),
+    );
+    const failures = results.flatMap((result) =>
+      result.status === 'rejected' ? [result.reason] : [],
+    );
+    if (failures.length)
+      throw new AggregateError(failures, 'Fetch cleanup failures');
+  } catch (error) {
+    throw new FetchCleanupError(error);
   }
-  await closeBrowser();
 }
 
 function isCloudflareChallenge(status: number, body: string): boolean {
   if (
-    /<title>\s*Just a moment\.\.\s*<\/title>/i.test(body) ||
+    /<title>\s*Just a moment\.+\s*<\/title>/i.test(body) ||
     /<title>\s*しばらくお待ちください/.test(body)
   ) {
     return true;
@@ -88,10 +122,6 @@ function parseData(text: string, contentType: string): unknown {
     }
   }
   return text;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function serialized<T>(fn: () => Promise<T>): Promise<T> {
@@ -123,38 +153,47 @@ function toFetchResponse(
   };
 }
 
-async function fetchBrowserResponse(url: string): Promise<FetchResponse> {
-  const response = await fetchWithBrowser(url);
+async function fetchBrowserResponse(
+  url: string,
+  budget: FetchBudget,
+): Promise<FetchResponse> {
+  const response = await fetchWithBrowser(url, budget);
   return toFetchResponse(response.status, response.text, response.contentType);
 }
 
-async function fetchURLInner(url: string): Promise<FetchResponse> {
-  if (FETCH_DELAY_MS > 0) {
-    await sleep(FETCH_DELAY_MS);
-  }
+async function fetchURLInner(
+  url: string,
+  budget: FetchBudget,
+): Promise<FetchResponse> {
+  if (FETCH_DELAY_MS > 0) await budget.sleep(FETCH_DELAY_MS);
 
-  let lastError: unknown;
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    budget.timeout();
     try {
-      if (useBrowserFetch) {
-        return await fetchBrowserResponse(url);
-      }
-      const current = await getSession();
-      const response = await current.fetch(url);
-      const text = await response.text();
+      if (useBrowserFetch) return await fetchBrowserResponse(url, budget);
+      const current = await getSession(budget);
+      const controller = new AbortController();
+      const { response, text } = await budget.run(
+        async (timeout) => {
+          const response = await current.fetch(url, {
+            timeout,
+            signal: controller.signal,
+          });
+          return { response, text: await response.text() };
+        },
+        REQUEST_TIMEOUT_MS,
+        () => controller.abort(),
+      );
       if (isCloudflareChallenge(response.status, text)) {
-        lastError = new CloudflareError();
         console.log(
-          `Cloudflare challenge on ${url} (attempt ${attempt + 1}/${MAX_ATTEMPTS})`,
+          `Cloudflare challenge (attempt ${attempt + 1}/${MAX_ATTEMPTS})`,
         );
-        const solved = await solveCloudflare();
-        if (solved) {
+        if (await solveCloudflare(budget)) {
           useBrowserFetch = true;
-          // Complete this attempt, including when it is the final one.
-          return await fetchBrowserResponse(url);
+          // Complete the handoff even when this is the final attempt.
+          return await fetchBrowserResponse(url, budget);
         }
-        await sleep(5000 * 3 ** attempt);
-        continue;
+        throw new CloudflareError();
       }
       return toFetchResponse(
         response.status,
@@ -162,38 +201,36 @@ async function fetchURLInner(url: string): Promise<FetchResponse> {
         response.headers.get('content-type') || '',
       );
     } catch (error) {
-      if (error instanceof HttpError && error.status === 429) {
-        lastError = error;
-        console.log(`HTTP 429 for ${url}, waiting 20000ms`);
-        await sleep(20_000);
-        continue;
-      }
-      if (error instanceof HttpError) {
+      if (!isTransientFetchError(error) || attempt + 1 >= MAX_ATTEMPTS)
         throw error;
+      const baseMs =
+        error instanceof HttpError && error.status === 429
+          ? 20_000
+          : 5000 * 3 ** attempt;
+      // Positive jitter never undercuts a challenge's cooldown hint.
+      const delayMs = Math.max(
+        Math.round(baseMs * (1 + Math.random() * 0.2)),
+        error instanceof CloudflareError ? error.retryAfterMs : 0,
+      );
+      console.log(
+        `Fetch retry category=${fetchErrorCategory(error)} attempt=${attempt + 1}/${MAX_ATTEMPTS} delayMs=${delayMs}`,
+      );
+      if (
+        !useBrowserFetch &&
+        !(error instanceof CloudflareError) &&
+        !(error instanceof HttpError)
+      ) {
+        await budget.run(() => closeHttpSession(), 5000);
       }
-      lastError = error;
-      if (useBrowserFetch) {
-        console.log(`Browser fetch failed for ${url}: ${error}`);
-        if (attempt + 1 < MAX_ATTEMPTS) {
-          const delayMs = Math.max(
-            5000 * 3 ** attempt,
-            error instanceof CloudflareError ? error.retryAfterMs : 0,
-          );
-          console.log(`Waiting ${delayMs}ms before the next browser attempt`);
-          await sleep(delayMs);
-        }
-        continue;
-      }
-      await closeSession();
-      await sleep(5000 * 3 ** attempt);
+      await budget.sleep(delayMs);
     }
   }
-
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(`Failed to fetch ${url}`);
+  throw new Error('Fetch attempts exhausted');
 }
 
-export async function fetchURL(url: string): Promise<FetchResponse> {
-  return serialized(() => fetchURLInner(url));
+export async function fetchURL(
+  url: string,
+  budget?: FetchBudget,
+): Promise<FetchResponse> {
+  return serialized(() => fetchURLInner(url, budget ?? new FetchBudget()));
 }

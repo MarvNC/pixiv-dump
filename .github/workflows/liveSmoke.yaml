@@ -1,0 +1,44 @@
+name: Live Pixiv smoke
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-pixiv-smoke
+  cancel-in-progress: false
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install Dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run live Pixiv smoke
+        run: xvfb-run -a bun run test:live
+
+      - name: Upload sanitized smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pixiv-live-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          path: diagnostics/live-smoke.json
+          if-no-files-found: warn
+          retention-days: 7

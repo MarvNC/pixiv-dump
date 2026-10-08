@@ -4,14 +4,16 @@
   "description": "",
   "main": "src/index.ts",
   "scripts": {
-    "test": "bun test",
+    "test": "bun run test:offline",
     "migrate": "bunx prisma migrate deploy",
     "prepare": "bunx prisma generate",
     "start": "bun src/index.ts",
     "format": "bunx prettier --write .",
     "format:check": "bunx prettier --check .",
     "lint": "bunx eslint . --ext .ts,.js",
-    "lint:fix": "bunx eslint . --ext .ts,.js --fix"
+    "lint:fix": "bunx eslint . --ext .ts,.js --fix",
+    "test:offline": "bun test ./src/test",
+    "test:live": "bun ./src/smoke/pixiv.ts"
   },
   "author": "marvnc",
   "license": "MIT",

@@ -1,5 +1,11 @@
 import { PIXIV_BASE_URL } from '../constants';
-import { CloudflareError } from './errors';
+import { FetchBudget, REQUEST_TIMEOUT_MS } from './budget';
+import {
+  CloudflareError,
+  FetchSetupError,
+  FetchTimeoutError,
+  FetchCleanupError,
+} from './errors';
 
 type PlaywrightBrowser = import('playwright').Browser;
 type PlaywrightContext = import('playwright').BrowserContext;
@@ -13,9 +19,12 @@ let browser: PlaywrightBrowser | null = null;
 let context: PlaywrightContext | null = null;
 let page: PlaywrightPage | null = null;
 let launchPromise: Promise<PlaywrightContext> | null = null;
+let browserGeneration = 0;
 let lastChallengeWaitMs: number | null = null;
 
-function browserChallengeError(message: string): CloudflareError {
+function browserChallengeError(
+  message = 'Cloudflare browser challenge',
+): CloudflareError {
   const retryAfterMs =
     lastChallengeWaitMs === null
       ? 0
@@ -29,146 +38,181 @@ function browserChallengeError(message: string): CloudflareError {
   return new CloudflareError(message, retryAfterMs);
 }
 
-async function getContext(): Promise<PlaywrightContext> {
-  if (context) {
-    return context;
-  }
+async function getContext(budget: FetchBudget): Promise<PlaywrightContext> {
+  if (context) return context;
   if (!launchPromise) {
-    launchPromise = (async () => {
-      const { chromium } = await import('playwright');
-      browser = await chromium.launch({
-        headless: !process.env.DISPLAY,
-        args: [
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-blink-features=AutomationControlled',
-        ],
+    const generation = browserGeneration;
+    let startingBrowser: PlaywrightBrowser | null = null;
+    launchPromise = budget
+      .run(async (timeout) => {
+        const { chromium } = await import('playwright');
+        startingBrowser = await chromium.launch({
+          headless: !process.env.DISPLAY,
+          timeout,
+          args: [
+            '--no-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-blink-features=AutomationControlled',
+          ],
+        });
+        if (generation !== browserGeneration || budget.remainingMs() === 0) {
+          void startingBrowser.close().catch(() => undefined);
+          throw new FetchTimeoutError(true);
+        }
+        const created = await startingBrowser.newContext({ locale: 'ja-JP' });
+        if (generation !== browserGeneration || budget.remainingMs() === 0) {
+          void startingBrowser.close().catch(() => undefined);
+          throw new FetchTimeoutError(true);
+        }
+        browser = startingBrowser;
+        context = created;
+        return created;
+      }, REQUEST_TIMEOUT_MS)
+      .catch((error) => {
+        browserGeneration++;
+        launchPromise = null;
+        if (startingBrowser)
+          void startingBrowser.close().catch(() => undefined);
+        if (error instanceof FetchTimeoutError && error.budgetExhausted)
+          throw error;
+        throw new FetchSetupError(error);
       });
-      context = await browser.newContext({
-        locale: 'ja-JP',
-      });
-      return context;
-    })().catch((error) => {
-      launchPromise = null;
-      throw error;
-    });
   }
   return launchPromise;
 }
 
-async function getPage(): Promise<PlaywrightPage> {
-  if (page && !page.isClosed()) {
-    return page;
-  }
-  const ctx = await getContext();
-  page = await ctx.newPage();
-  return page;
+async function getPage(budget: FetchBudget): Promise<PlaywrightPage> {
+  if (page && !page.isClosed()) return page;
+  const ctx = await getContext(budget);
+  const generation = browserGeneration;
+  const created = await budget.run(async () => {
+    const created = await ctx.newPage();
+    if (generation !== browserGeneration || budget.remainingMs() === 0) {
+      void created.close().catch(() => undefined);
+      throw new FetchTimeoutError(true);
+    }
+    return created;
+  });
+  page = created;
+  return created;
 }
 
-async function cookieNames(): Promise<string[]> {
-  if (!context) {
-    return [];
-  }
-  return (await context.cookies()).map((cookie) => cookie.name);
-}
-
-async function hasPixivSession(): Promise<boolean> {
-  const names = await cookieNames();
-  return names.includes('cf_clearance') || names.includes('pixpsession2');
+async function hasPixivSession(budget: FetchBudget): Promise<boolean> {
+  if (!context) return false;
+  const cookies = await budget.run(() => context!.cookies());
+  return cookies.some(
+    ({ name }) => name === 'cf_clearance' || name === 'pixpsession2',
+  );
 }
 
 function isChallengeTitle(title: string): boolean {
-  return (
-    /just a moment/i.test(title) ||
-    /しばらくお待ちください/.test(title) ||
-    /attention required/i.test(title) ||
-    /access denied/i.test(title) ||
-    /you have been blocked/i.test(title)
+  return /just a moment|しばらくお待ちください|attention required|access denied|you have been blocked/i.test(
+    title,
   );
 }
 
 function isChallengeBody(text: string): boolean {
   return (
-    /<title>\s*Just a moment\.\.\.\s*<\/title>/i.test(text) ||
+    /<title>\s*Just a moment\.+\s*<\/title>/i.test(text) ||
     /<title>\s*しばらくお待ちください/.test(text) ||
     /challenge-platform/i.test(text)
   );
 }
 
-export function throwIfChallengeBody(url: string, text: string): void {
-  if (isChallengeBody(text)) {
-    throw browserChallengeError(`Cloudflare challenge body for ${url}`);
-  }
+export function throwIfChallengeBody(_url: string, text: string): void {
+  if (isChallengeBody(text))
+    throw browserChallengeError('Cloudflare challenge response');
 }
 
-async function waitForChallengeClear(p: PlaywrightPage): Promise<void> {
-  const title = await p.title();
-  if (!isChallengeTitle(title)) {
-    return;
-  }
-  const cooldownError = browserChallengeError(
-    `Cloudflare browser challenge for ${p.url()}`,
-  );
-  if (cooldownError.retryAfterMs > 0) {
-    // Do not spend a fetch attempt checking the same blocked page immediately.
-    throw cooldownError;
-  }
+async function waitForChallengeClear(
+  p: PlaywrightPage,
+  budget: FetchBudget,
+): Promise<void> {
+  if (!isChallengeTitle(await budget.run(() => p.title()))) return;
+  const cooldownError = browserChallengeError();
+  if (cooldownError.retryAfterMs > 0) throw cooldownError;
   lastChallengeWaitMs = Date.now();
-  await p.waitForFunction(
-    () => {
-      const t = (globalThis as unknown as { document: { title: string } })
-        .document.title;
-      return !/just a moment/i.test(t) && !/しばらくお待ちください/.test(t);
-    },
-    null,
-    { timeout: 120_000 },
-  );
-}
-
-async function waitForPixivSession(timeoutMs: number): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await hasPixivSession()) {
-      return true;
+  try {
+    const ready = await budget.run(
+      (timeout) =>
+        p.waitForFunction(
+          () => {
+            const title = (
+              globalThis as unknown as { document: { title: string } }
+            ).document.title;
+            return !/just a moment|しばらくお待ちください|attention required|access denied|you have been blocked/i.test(
+              title,
+            );
+          },
+          null,
+          { timeout },
+        ),
+      120_000,
+    );
+    await budget.run(() => ready.dispose());
+  } catch (error) {
+    // Only a known challenge wait timeout is a challenge failure. Parser,
+    // assertion, launch, and unrelated page errors must retain their identity.
+    if (
+      (error instanceof FetchTimeoutError && !error.budgetExhausted) ||
+      (error instanceof Error && error.name === 'TimeoutError')
+    ) {
+      throw browserChallengeError();
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    throw error;
   }
-  return hasPixivSession();
 }
 
-async function waitForReadyPage(p: PlaywrightPage): Promise<void> {
-  await p.waitForLoadState('domcontentloaded', {
-    timeout: PAGE_READY_TIMEOUT_MS,
-  });
-  const ready = await p.waitForFunction(
-    (baseUrl) => {
-      const { document, location } = globalThis as unknown as {
-        document: { title: string; readyState: string };
-        location: { href: string; pathname: string };
-      };
-      // A clearance cookie may precede the navigation to the real document.
-      // JSON/XML fallback pages can legitimately have no title; the homepage cannot.
-      return (
-        location.href.startsWith(baseUrl) &&
-        document.readyState !== 'loading' &&
-        (document.title.trim() !== '' || location.pathname !== '/') &&
-        !/^\s*Loading(?:\s|$)/i.test(document.title)
-      );
-    },
-    PIXIV_BASE_URL,
-    { timeout: PAGE_READY_TIMEOUT_MS },
-  );
-  await ready.dispose();
-  if (isChallengeTitle(await p.title())) {
-    throw browserChallengeError(`Cloudflare browser challenge for ${p.url()}`);
+async function waitForPixivSession(budget: FetchBudget): Promise<void> {
+  const deadline = Date.now() + Math.min(15_000, budget.timeout());
+  while (Date.now() < deadline) {
+    if (await hasPixivSession(budget)) return;
+    await budget.sleep(Math.min(500, deadline - Date.now()));
   }
+}
+
+async function waitForReadyPage(
+  p: PlaywrightPage,
+  budget: FetchBudget,
+): Promise<void> {
+  await budget.run(
+    (timeout) => p.waitForLoadState('domcontentloaded', { timeout }),
+    PAGE_READY_TIMEOUT_MS,
+  );
+  const ready = await budget.run(
+    (timeout) =>
+      p.waitForFunction(
+        (baseUrl) => {
+          const { document, location } = globalThis as unknown as {
+            document: { title: string; readyState: string };
+            location: { href: string; pathname: string };
+          };
+          // Cookies may precede navigation. Untitled JSON/XML pages are valid;
+          // an untitled or loading homepage is not a ready document.
+          return (
+            location.href.startsWith(baseUrl) &&
+            document.readyState !== 'loading' &&
+            (document.title.trim() !== '' || location.pathname !== '/') &&
+            !/^\s*Loading(?:\s|$)/i.test(document.title)
+          );
+        },
+        PIXIV_BASE_URL,
+        { timeout },
+      ),
+    PAGE_READY_TIMEOUT_MS,
+  );
+  await budget.run(() => ready.dispose());
+  if (isChallengeTitle(await budget.run(() => p.title())))
+    throw browserChallengeError();
 }
 
 async function retryAfterNavigation<T>(
   p: PlaywrightPage,
+  budget: FetchBudget,
   operation: () => Promise<T>,
 ): Promise<T> {
   for (let attempt = 1; ; attempt++) {
+    budget.timeout();
     try {
       return await operation();
     } catch (error) {
@@ -176,131 +220,155 @@ async function retryAfterNavigation<T>(
         attempt >= MAX_NAVIGATION_ATTEMPTS ||
         p.isClosed() ||
         !(error instanceof Error) ||
-        !/Execution context was destroyed|Cannot find context with specified id/.test(
+        error.name === 'AssertionError' ||
+        !/^page\.(?:evaluate|title|waitForFunction): (?:Execution context was destroyed|Cannot find context with specified id)/.test(
           error.message,
         )
-      ) {
+      )
         throw error;
-      }
-      // Readiness and evaluate cannot be atomic. Let an in-flight navigation
-      // settle, then recheck the page before retrying this read-only fetch.
-      await p.waitForLoadState('domcontentloaded', {
-        timeout: PAGE_READY_TIMEOUT_MS,
-      });
-      await p.waitForTimeout(250);
+      await budget.run(
+        (timeout) => p.waitForLoadState('domcontentloaded', { timeout }),
+        PAGE_READY_TIMEOUT_MS,
+      );
+      await budget.sleep(250);
     }
   }
 }
 
-async function ensureClearedPage(p: PlaywrightPage): Promise<void> {
+async function ensureClearedPage(
+  p: PlaywrightPage,
+  budget: FetchBudget,
+): Promise<void> {
   if (!p.url().startsWith(PIXIV_BASE_URL)) {
-    await p.goto(PIXIV_BASE_URL, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60_000,
-    });
+    await budget.run(
+      (timeout) =>
+        p.goto(PIXIV_BASE_URL, { waitUntil: 'domcontentloaded', timeout }),
+      REQUEST_TIMEOUT_MS,
+    );
   }
-  await waitForChallengeClear(p);
-  await waitForPixivSession(15_000);
-  await waitForReadyPage(p);
+  await waitForChallengeClear(p, budget);
+  await waitForPixivSession(budget);
+  await waitForReadyPage(p, budget);
 }
 
 async function pageFetch(
   p: PlaywrightPage,
   url: string,
+  budget: FetchBudget,
 ): Promise<{ status: number; text: string; contentType: string }> {
-  return p.evaluate(async (target) => {
-    const res = await fetch(target, { credentials: 'include' });
-    return {
-      status: res.status,
-      text: await res.text(),
-      contentType: res.headers.get('content-type') || '',
-    };
-  }, url);
+  return budget.run(
+    (timeoutMs) =>
+      p.evaluate(
+        async ({ target, timeoutMs }) => {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeoutMs);
+          try {
+            const res = await fetch(target, {
+              credentials: 'include',
+              signal: controller.signal,
+            });
+            return {
+              status: res.status,
+              text: await res.text(),
+              contentType: res.headers.get('content-type') || '',
+            };
+          } finally {
+            clearTimeout(timer);
+          }
+        },
+        { target: url, timeoutMs },
+      ),
+    REQUEST_TIMEOUT_MS,
+    () => {
+      // The in-page controller cancels normal fetch/body stalls. If the renderer
+      // itself is wedged, close this page so it cannot leak into a later attempt.
+      if (page === p) page = null;
+      void p.close().catch(() => undefined);
+    },
+  );
 }
 
-export async function solveCloudflare(): Promise<boolean> {
-  try {
-    const p = await getPage();
-    return await retryAfterNavigation(p, async () => {
-      await ensureClearedPage(p);
-      const names = await cookieNames();
-      const title = await p.title();
-      const url = p.url();
-      const ready =
-        url.startsWith(PIXIV_BASE_URL) &&
-        !isChallengeTitle(title) &&
-        !/^\s*Loading(?:\s|$)/i.test(title) &&
-        (title.trim() !== '' || new URL(url).pathname !== '/') &&
-        (await hasPixivSession());
-      console.log(
-        `Cloudflare browser solve ${ready ? 'ok' : 'not ready'} title=${JSON.stringify(
-          title,
-        )} cookies=${names.join(', ')} page=${url}`,
+export async function solveCloudflare(
+  budget = new FetchBudget(),
+): Promise<boolean> {
+  const p = await getPage(budget);
+  return retryAfterNavigation(p, budget, async () => {
+    await ensureClearedPage(p, budget);
+    const title = await budget.run(() => p.title());
+    const url = p.url();
+    const ready =
+      url.startsWith(PIXIV_BASE_URL) &&
+      !isChallengeTitle(title) &&
+      !/^\s*Loading(?:\s|$)/i.test(title) &&
+      (title.trim() !== '' || new URL(url).pathname !== '/') &&
+      (await hasPixivSession(budget));
+    console.log(`Cloudflare browser solve ${ready ? 'ok' : 'not ready'}`);
+    return ready;
+  });
+}
+
+export async function fetchWithBrowser(
+  url: string,
+  budget = new FetchBudget(),
+): Promise<{ status: number; text: string; contentType: string }> {
+  const p = await getPage(budget);
+  return retryAfterNavigation(p, budget, async () => {
+    await ensureClearedPage(p, budget);
+    let result = await pageFetch(p, url, budget);
+    if (isChallengeBody(result.text)) {
+      await budget.run(
+        (timeout) => p.goto(url, { waitUntil: 'domcontentloaded', timeout }),
+        REQUEST_TIMEOUT_MS,
       );
-      return ready;
-    });
-  } catch (error) {
-    const p = page && !page.isClosed() ? page : null;
-    const title = p ? await p.title().catch(() => '') : '';
-    const url = p ? p.url() : '';
-    console.error(
-      `Cloudflare browser solve failed: ${error} title=${JSON.stringify(title)} page=${url}`,
-    );
-    return false;
-  }
+      await waitForChallengeClear(p, budget);
+      await waitForReadyPage(p, budget);
+      result = await pageFetch(p, url, budget);
+    }
+    throwIfChallengeBody(url, result.text);
+    return result;
+  });
 }
 
-export async function fetchWithBrowser(url: string): Promise<{
-  status: number;
-  text: string;
-  contentType: string;
-}> {
-  try {
-    const p = await getPage();
-    return await retryAfterNavigation(p, async () => {
-      await ensureClearedPage(p);
-      let result = await pageFetch(p, url);
-      if (isChallengeBody(result.text)) {
-        await p.goto(url, {
-          waitUntil: 'domcontentloaded',
-          timeout: 60_000,
-        });
-        await waitForChallengeClear(p);
-        await waitForReadyPage(p);
-        result = await pageFetch(p, url);
-      }
-      throwIfChallengeBody(url, result.text);
-      return result;
-    });
-  } catch (error) {
-    if (error instanceof CloudflareError) {
-      throw error;
-    }
-    const p = page && !page.isClosed() ? page : null;
-    const title = p ? await p.title().catch(() => '') : '';
-    if (isChallengeTitle(title)) {
-      throw browserChallengeError(`Cloudflare browser challenge for ${url}`);
-    }
-    throw error;
-  }
-}
-
-export async function closeBrowser(): Promise<void> {
+export async function closeBrowser(
+  cleanup = new FetchBudget(5000),
+): Promise<void> {
   lastChallengeWaitMs = null;
   launchPromise = null;
+  browserGeneration++;
   const currentPage = page;
   const currentContext = context;
   const currentBrowser = browser;
   page = null;
   context = null;
   browser = null;
-  if (currentPage && !currentPage.isClosed()) {
-    await currentPage.close().catch(() => undefined);
+  const operations = [
+    () =>
+      currentPage && !currentPage.isClosed()
+        ? currentPage.close()
+        : Promise.resolve(),
+    () => currentContext?.close() ?? Promise.resolve(),
+    () => currentBrowser?.close() ?? Promise.resolve(),
+  ];
+  const failures: unknown[] = [];
+  for (const [index, operation] of operations.entries()) {
+    // Close children before parents to avoid TargetClosed races. Reserve part
+    // of the shared grace period for each remaining resource, even if one hangs.
+    const pending = Promise.resolve().then(operation);
+    void pending.catch(() => undefined);
+    try {
+      await cleanup.run(
+        () => pending,
+        Math.max(
+          1,
+          Math.floor(cleanup.remainingMs() / (operations.length - index)),
+        ),
+      );
+    } catch (error) {
+      failures.push(error);
+    }
   }
-  if (currentContext) {
-    await currentContext.close().catch(() => undefined);
-  }
-  if (currentBrowser) {
-    await currentBrowser.close().catch(() => undefined);
-  }
+  if (failures.length)
+    throw new FetchCleanupError(
+      new AggregateError(failures, 'Browser cleanup failures'),
+    );
 }
