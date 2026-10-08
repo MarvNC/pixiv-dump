@@ -2,7 +2,8 @@ import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { runInNewContext } from 'node:vm';
 import { chromium, type Browser } from 'playwright';
 import { PIXIV_BASE_URL } from '../constants';
-import { CloudflareError } from '../fetch/errors';
+import { CloudflareError, FetchCleanupError } from '../fetch/errors';
+import { FetchBudget } from '../fetch/budget';
 import {
   closeBrowser,
   fetchWithBrowser,
@@ -115,7 +116,9 @@ test('waits for the loading document to settle even with a clearance cookie', as
 test('a loading-page timeout is a failure even with a clearance cookie', async () => {
   fixture.document.title = `Loading ${PIXIV_BASE_URL}`;
 
-  expect(await solveCloudflare()).toBe(false);
+  await expect(solveCloudflare()).rejects.toMatchObject({
+    name: 'TimeoutError',
+  });
   expect(fixture.page.evaluate).not.toHaveBeenCalled();
 });
 
@@ -180,7 +183,7 @@ for (const title of [
   test(`a persistent ${JSON.stringify(title)} page is not solved by a cookie`, async () => {
     fixture.document.title = title;
 
-    expect(await solveCloudflare()).toBe(false);
+    await expect(solveCloudflare()).rejects.toBeInstanceOf(CloudflareError);
     // Re-enter during the challenge-wait cooldown: it must still be a failure.
     await expect(fetchWithBrowser(TARGET_URL)).rejects.toBeInstanceOf(
       CloudflareError,
@@ -258,7 +261,7 @@ test('retries navigation errors while checking the page title', async () => {
 
   expect(await fetchWithBrowser(TARGET_URL)).toEqual(RESPONSE);
   expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
-  expect(fixture.page.waitForTimeout).toHaveBeenCalledTimes(1);
+  expect(fixture.page.waitForLoadState).toHaveBeenCalledTimes(2);
 });
 
 test('unrelated title errors are not hidden by session cookies', async () => {
@@ -272,7 +275,9 @@ test('unrelated title errors are not hidden by session cookies', async () => {
 test('an empty homepage title is not ready', async () => {
   fixture.document.title = '';
 
-  expect(await solveCloudflare()).toBe(false);
+  await expect(solveCloudflare()).rejects.toMatchObject({
+    name: 'TimeoutError',
+  });
   expect(fixture.page.evaluate).not.toHaveBeenCalled();
 });
 
@@ -298,7 +303,7 @@ test('a sitemap challenge after a timed-out homepage wait carries its remaining 
     throw timeoutError();
   });
   try {
-    expect(await solveCloudflare()).toBe(false);
+    await expect(solveCloudflare()).rejects.toBeInstanceOf(CloudflareError);
     now += 5000;
     fixture.document.title = PAGE_TITLE;
     expect(await solveCloudflare()).toBe(true);
@@ -354,4 +359,118 @@ test('a browser challenge timeout preserves the remaining cooldown in its error'
   } finally {
     clock.mockRestore();
   }
+});
+
+test('browser launch failures retain their cause rather than becoming a failed challenge', async () => {
+  const cause = new Error('Browser executable missing');
+  launch.mockRejectedValue(cause);
+  await expect(solveCloudflare()).rejects.toMatchObject({
+    name: 'FetchSetupError',
+    cause,
+  });
+  expect(launch).toHaveBeenCalledTimes(1);
+});
+
+test('unrelated errors during solve are propagated unchanged', async () => {
+  const error = new TypeError('Readiness programming error');
+  fixture.page.title.mockRejectedValue(error);
+  await expect(solveCloudflare()).rejects.toBe(error);
+});
+
+test('the in-page request aborts while a response body is stalled', async () => {
+  await fetchWithBrowser(TARGET_URL);
+  const [operation, argument] = fixture.page.evaluate.mock
+    .calls[0] as unknown as [(argument: unknown) => Promise<unknown>, unknown];
+  let signal: AbortSignal | undefined;
+  let abort: (() => void) | undefined;
+  let bodyStarted: (() => void) | undefined;
+  const readingBody = new Promise<void>((resolve) => {
+    bodyStarted = resolve;
+  });
+  const clearTimer = mock(() => undefined);
+  const request = runInNewContext(`(${operation})(argument)`, {
+    argument,
+    AbortController,
+    setTimeout: (callback: () => void) => {
+      abort = callback;
+      return 123;
+    },
+    clearTimeout: clearTimer,
+    fetch: async (_url: string, options: { signal: AbortSignal }) => {
+      signal = options.signal;
+      return {
+        status: 200,
+        text: () =>
+          new Promise((_, reject) => {
+            bodyStarted!();
+            signal!.addEventListener('abort', () =>
+              reject(new Error('aborted')),
+            );
+          }),
+        headers: new Headers(),
+      };
+    },
+  }) as Promise<unknown>;
+  await readingBody;
+  expect(signal?.aborted).toBe(false);
+  abort!();
+  await expect(request).rejects.toThrow('aborted');
+  expect(signal?.aborted).toBe(true);
+  expect(clearTimer).toHaveBeenCalledWith(123);
+});
+
+test('a wedged page evaluation is bounded by the shared deadline and closes the page', async () => {
+  fixture.page.evaluate.mockImplementation(() => new Promise(() => undefined));
+  await expect(
+    fetchWithBrowser(TARGET_URL, new FetchBudget(20)),
+  ).rejects.toMatchObject({ name: 'FetchTimeoutError', budgetExhausted: true });
+  expect(fixture.page.close).toHaveBeenCalledTimes(1);
+});
+
+test('challenge errors and solve logs omit page URLs, titles, and cookie names', async () => {
+  const log = spyOn(console, 'log').mockImplementation(() => undefined);
+  const secret = 'secret-session-value';
+  fixture.document.title = secret;
+  fixture.location.href = `${PIXIV_BASE_URL}?token=${secret}`;
+  try {
+    expect(await solveCloudflare()).toBe(true);
+    expect(JSON.stringify(log.mock.calls)).not.toContain(secret);
+    expect(JSON.stringify(log.mock.calls)).not.toContain('cf_clearance');
+    fixture.page.evaluate.mockResolvedValue({
+      ...RESPONSE,
+      text: CHALLENGE_BODY,
+    });
+    try {
+      await fetchWithBrowser(fixture.location.href);
+      throw new Error('Expected a challenge');
+    } catch (error) {
+      expect(error).toBeInstanceOf(CloudflareError);
+      expect((error as Error).message).not.toContain(secret);
+      expect((error as Error).message).not.toContain('https://');
+    }
+  } finally {
+    log.mockRestore();
+  }
+});
+
+test('cleanup closes every browser resource and surfaces failures safely', async () => {
+  await fetchWithBrowser(TARGET_URL);
+  const cause = new Error('Raw browser close failure with secret');
+  fixture.page.close.mockRejectedValue(cause);
+  await expect(closeBrowser()).rejects.toBeInstanceOf(FetchCleanupError);
+  expect(fixture.context.close).toHaveBeenCalledTimes(1);
+  expect(fixture.browser.close).toHaveBeenCalledTimes(1);
+  // Handles were detached before closing; the next cleanup is safe to repeat.
+  await expect(closeBrowser()).resolves.toBeUndefined();
+});
+
+test('cleanup hangs are bounded and reported rather than silently succeeding', async () => {
+  await fetchWithBrowser(TARGET_URL);
+  fixture.context.close.mockImplementation(() => new Promise(() => undefined));
+  await expect(closeBrowser(new FetchBudget(20))).rejects.toMatchObject({
+    name: 'FetchCleanupError',
+    cause: { name: 'AggregateError' },
+  });
+  expect(fixture.page.close).toHaveBeenCalledTimes(1);
+  expect(fixture.browser.close).toHaveBeenCalledTimes(1);
 });

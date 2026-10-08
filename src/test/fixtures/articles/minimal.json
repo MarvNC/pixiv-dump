@@ -1,0 +1,27 @@
+{
+  "tagName": "C++ / 試験",
+  "responses": {
+    "get_article": {
+      "nodes": "[{\"tag\":\"p\",\"text\":\"見出しのない本文。\"},{\"tag\":\"p\",\"children\":[{\"text\":\"もう一段落。\"}]}]"
+    },
+    "get_breadcrumbs": [],
+    "get_article_info": {
+      "articleViewCount": 0,
+      "pixivWorkCount": 0,
+      "checklistCount": 0
+    }
+  },
+  "expected": {
+    "reading": "",
+    "header": ["C++ / 試験"],
+    "mainText": "見出しのない本文。\nもう一段落。",
+    "summary": "",
+    "parent": null,
+    "related_tags": [],
+    "main_illst_url": "",
+    "view_count": 0,
+    "illust_count": 0,
+    "check_count": 0,
+    "updated_at": ""
+  }
+}

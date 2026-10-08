@@ -3,30 +3,32 @@ name: Test
 on:
   push:
   pull_request:
-  schedule:
-    - cron: '0 0 * * *'
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-format:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.2
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Check ESLint
-        run: bunx eslint . --ext .ts,.js
+        run: bun run lint
 
       - name: Check Prettier formatting
-        run: bunx prettier --check .
+        run: bun run format:check
 
   test:
     runs-on: ubuntu-latest
@@ -36,15 +38,12 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.4.2
 
       - name: Install Dependencies
-        run: bun install
+        run: bun install --frozen-lockfile
 
-      - name: Install Playwright Chromium
-        run: bunx playwright install --with-deps chromium
-
-      - name: Run Tests
-        run: xvfb-run -a bun test
+      - name: Run deterministic offline tests
+        run: bun run test:offline
