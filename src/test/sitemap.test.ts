@@ -6,6 +6,7 @@ import {
   lastmodToUpdatedAt,
   parseSitemapIndex,
   parseUrlset,
+  SitemapSchemaError,
   tagNameFromArticleUrl,
 } from '../helpers/sitemap';
 
@@ -51,5 +52,63 @@ test('the known WAF vandalism tags are explicitly ignored', () => {
     '..',
     '</title><svg onload=alert();>',
     `'"><script>alert(1)</script>`,
+  ]);
+});
+
+test('accepts legitimately empty URL sets including a self-closing root', () => {
+  expect(parseUrlset('<urlset></urlset>')).toEqual([]);
+  expect(
+    parseUrlset(
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" />',
+    ),
+  ).toEqual([]);
+  expect(
+    parseUrlset(
+      '<?xml version="1.0"?>\n<!-- no articles -->\n<urlset>\n</urlset>',
+    ),
+  ).toEqual([]);
+});
+
+for (const xml of [
+  '<html><title>Service unavailable</title></html>',
+  '<urlset></urlset>',
+  '<sitemapindex>',
+  '<sitemapindex></sitemapindex>',
+  '<sitemapindex><sitemap><loc>https://dic.pixiv.net/sitemap/part/1</loc></sitemap></sitemapindex>',
+  '<sitemapindex><sitemap><loc>https://dic.pixiv.net/sitemap/part/1</loc><lastmod>not a date</lastmod></sitemap></sitemapindex>',
+]) {
+  test(`rejects invalid sitemap indexes rather than reporting no parts: ${xml}`, () => {
+    expect(() => parseSitemapIndex(xml)).toThrow(SitemapSchemaError);
+  });
+}
+
+const URL_ENTRY =
+  '<url><loc>https://dic.pixiv.net/a/example</loc><lastmod>2026-10-08T00:00:00+09:00</lastmod></url>';
+
+for (const xml of [
+  '<html><title>Just a moment...</title></html>',
+  '<sitemapindex></sitemapindex>',
+  `<urlset>${URL_ENTRY}`,
+  `<urlset>${URL_ENTRY.replace('</url>', '')}</urlset>`,
+  `<urlset>${URL_ENTRY}<url><loc>incomplete entry</loc></url></urlset>`,
+  `<urlset>${URL_ENTRY.replace('2026-10-08T00:00:00+09:00', 'invalid')}</urlset>`,
+  `<urlset>${URL_ENTRY}</urlset><html></html>`,
+  `<urlset>${URL_ENTRY}<unexpected /></urlset>`,
+]) {
+  test(`rejects invalid sitemap parts before a caller can advance its checkpoint: ${xml}`, () => {
+    expect(() => parseUrlset(xml)).toThrow(SitemapSchemaError);
+  });
+}
+
+test('accepts declarations, comments, and surrounding XML whitespace', () => {
+  expect(
+    parseUrlset(
+      `\uFEFF<?xml version="1.0" encoding="UTF-8"?>\n<!-- sitemap -->\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${URL_ENTRY}\n<!-- end -->\n</urlset>\n`,
+    ),
+  ).toEqual([
+    {
+      loc: 'https://dic.pixiv.net/a/example',
+      lastmod: '2026-10-08T00:00:00+09:00',
+    },
   ]);
 });

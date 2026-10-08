@@ -21,7 +21,8 @@ import {
 
 const UPSERT_BATCH_SIZE = 50;
 
-export async function scrapeSitemap() {
+export async function scrapeSitemap(signal?: AbortSignal) {
+  signal?.throwIfAborted();
   const removed = await prisma.pixivArticle.deleteMany({
     where: { tag_name: { in: [...IGNORED_WAF_TAGS] } },
   });
@@ -29,7 +30,9 @@ export async function scrapeSitemap() {
     console.log(`Removed ${removed.count} known WAF sitemap entries`);
   }
 
+  signal?.throwIfAborted();
   const indexResponse = await fetchURL(SITEMAP_INDEX_URL);
+  signal?.throwIfAborted();
   if (typeof indexResponse.data !== 'string') {
     throw new Error('Sitemap index was not XML text');
   }
@@ -52,12 +55,14 @@ export async function scrapeSitemap() {
   let partIndex = 0;
   for (const part of dueParts) {
     partIndex++;
-    const upserted = await scrapeSitemapPart(part);
+    signal?.throwIfAborted();
+    const upserted = await scrapeSitemapPart(part, signal);
     console.log(
       `Sitemap: ${part.loc} ${partIndex}/${dueParts.length} (${upserted} upserted)`,
     );
   }
 
+  signal?.throwIfAborted();
   if (parts.length > 0) {
     await updateCategoryScraped({
       category: SITEMAP_PROGRESS_CATEGORY,
@@ -67,8 +72,12 @@ export async function scrapeSitemap() {
   }
 }
 
-async function scrapeSitemapPart(part: SitemapEntry): Promise<number> {
+async function scrapeSitemapPart(
+  part: SitemapEntry,
+  signal?: AbortSignal,
+): Promise<number> {
   const response = await fetchURL(part.loc);
+  signal?.throwIfAborted();
   if (typeof response.data !== 'string') {
     throw new Error(`Sitemap part was not XML text: ${part.loc}`);
   }
@@ -96,6 +105,7 @@ async function scrapeSitemapPart(part: SitemapEntry): Promise<number> {
   }
 
   for (const batch of chunk(articles, UPSERT_BATCH_SIZE)) {
+    signal?.throwIfAborted();
     await upsertArticleBatch(batch);
   }
   return articles.length;
