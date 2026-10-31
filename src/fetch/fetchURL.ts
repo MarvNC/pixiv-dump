@@ -15,6 +15,8 @@ import {
   isTransientFetchError,
 } from './errors';
 import { FetchBudget, REQUEST_TIMEOUT_MS } from './budget';
+import { challengeEvidence, type ChallengeResponse } from './challenge';
+import { fetchDiagnostic, recordFetchDiagnostic } from './diagnostics';
 
 export { CloudflareError, HttpError } from './errors';
 
@@ -29,6 +31,7 @@ let session: Session | null = null;
 let sessionPromise: Promise<Session> | null = null;
 let fetchQueue: Promise<unknown> = Promise.resolve();
 let useBrowserFetch = false;
+let lastFetchCompletedAt: number | null = null;
 
 function sessionOptions() {
   return {
@@ -78,6 +81,7 @@ export async function closeSession(
   cleanup = new FetchBudget(5000),
 ): Promise<void> {
   useBrowserFetch = false;
+  lastFetchCompletedAt = null;
   // Attempt every cleanup even if another fails, but never hang the CLI.
   try {
     const results = await cleanup.run(() =>
@@ -94,16 +98,6 @@ export async function closeSession(
   } catch (error) {
     throw new FetchCleanupError(error);
   }
-}
-
-function isCloudflareChallenge(status: number, body: string): boolean {
-  if (
-    /<title>\s*Just a moment\.+\s*<\/title>/i.test(body) ||
-    /<title>\s*しばらくお待ちください/.test(body)
-  ) {
-    return true;
-  }
-  return status === 403 && /challenge-platform/i.test(body);
 }
 
 function parseData(text: string, contentType: string): unknown {
@@ -137,8 +131,9 @@ function toFetchResponse(
   status: number,
   text: string,
   contentType: string,
+  cfMitigated?: string | null,
 ): FetchResponse {
-  if (isCloudflareChallenge(status, text)) {
+  if (challengeEvidence({ status, text, contentType, cfMitigated })) {
     throw new CloudflareError();
   }
   if (status === 404) {
@@ -158,17 +153,41 @@ async function fetchBrowserResponse(
   budget: FetchBudget,
 ): Promise<FetchResponse> {
   const response = await fetchWithBrowser(url, budget);
-  return toFetchResponse(response.status, response.text, response.contentType);
+  try {
+    return toFetchResponse(
+      response.status,
+      response.text,
+      response.contentType,
+      response.cfMitigated,
+    );
+  } catch (error) {
+    recordFetchDiagnostic(
+      error,
+      url,
+      'browser',
+      response,
+      challengeEvidence(response) ?? undefined,
+    );
+    throw error;
+  }
 }
 
 async function fetchURLInner(
   url: string,
   budget: FetchBudget,
 ): Promise<FetchResponse> {
-  if (FETCH_DELAY_MS > 0) await budget.sleep(FETCH_DELAY_MS);
+  if (lastFetchCompletedAt !== null) {
+    const delay = Math.max(
+      0,
+      FETCH_DELAY_MS - (Date.now() - lastFetchCompletedAt),
+    );
+    if (delay > 0) await budget.sleep(delay);
+  }
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     budget.timeout();
+    let httpResponse: ChallengeResponse | undefined;
+    let transport: 'http' | 'browser' = useBrowserFetch ? 'browser' : 'http';
     try {
       if (useBrowserFetch) return await fetchBrowserResponse(url, budget);
       const current = await getSession(budget);
@@ -184,10 +203,17 @@ async function fetchURLInner(
         REQUEST_TIMEOUT_MS,
         () => controller.abort(),
       );
-      if (isCloudflareChallenge(response.status, text)) {
+      httpResponse = {
+        status: response.status,
+        text,
+        contentType: response.headers.get('content-type') || '',
+        cfMitigated: response.headers.get('cf-mitigated') || '',
+      };
+      if (challengeEvidence(httpResponse)) {
         console.log(
           `Cloudflare challenge (attempt ${attempt + 1}/${MAX_ATTEMPTS})`,
         );
+        transport = 'browser';
         if (await solveCloudflare(budget)) {
           useBrowserFetch = true;
           // Complete the handoff even when this is the final attempt.
@@ -198,9 +224,19 @@ async function fetchURLInner(
       return toFetchResponse(
         response.status,
         text,
-        response.headers.get('content-type') || '',
+        httpResponse.contentType,
+        httpResponse.cfMitigated,
       );
     } catch (error) {
+      recordFetchDiagnostic(
+        error,
+        url,
+        transport,
+        transport === 'browser' ? undefined : httpResponse,
+        transport === 'http' && httpResponse
+          ? challengeEvidence(httpResponse) ?? undefined
+          : undefined,
+      );
       if (!isTransientFetchError(error) || attempt + 1 >= MAX_ATTEMPTS)
         throw error;
       const baseMs =
@@ -213,7 +249,7 @@ async function fetchURLInner(
         error instanceof CloudflareError ? error.retryAfterMs : 0,
       );
       console.log(
-        `Fetch retry category=${fetchErrorCategory(error)} attempt=${attempt + 1}/${MAX_ATTEMPTS} delayMs=${delayMs}`,
+        `Fetch retry category=${fetchErrorCategory(error)} attempt=${attempt + 1}/${MAX_ATTEMPTS} delayMs=${delayMs} diagnostic=${JSON.stringify(fetchDiagnostic(error))}`,
       );
       if (
         !useBrowserFetch &&
@@ -232,5 +268,17 @@ export async function fetchURL(
   url: string,
   budget?: FetchBudget,
 ): Promise<FetchResponse> {
-  return serialized(() => fetchURLInner(url, budget ?? new FetchBudget()));
+  return serialized(async () => {
+    try {
+      return await fetchURLInner(url, budget ?? new FetchBudget());
+    } catch (error) {
+      recordFetchDiagnostic(error, url, useBrowserFetch ? 'browser' : 'http');
+      console.error(
+        `Fetch failed category=${fetchErrorCategory(error)} diagnostic=${JSON.stringify(fetchDiagnostic(error))}`,
+      );
+      throw error;
+    } finally {
+      lastFetchCompletedAt = Date.now();
+    }
+  });
 }

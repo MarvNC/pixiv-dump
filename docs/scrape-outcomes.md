@@ -96,3 +96,63 @@ publisher/release guard, and isolated entrypoint processes with mocked clients.
 Those subprocess tests exercise fatal article/database errors, benign 404s,
 ignored tags, blocked fetches, timeout, repeated signals, and forced shutdown
 without contacting Pixiv or launching a browser.
+
+## Request pacing and challenge diagnostics
+
+Serialized requests leave a one-second quiet interval after the preceding
+request completes. Retries retain the shared five-minute budget. A persistent
+browser response challenge backs off for at least 60 seconds, even when the
+browser's current page title is normal; a longer existing challenge-wait
+cooldown wins. This reduces request bursts; it does not guarantee access or
+bypass a challenge.
+
+HTTP and browser responses use the same challenge detector. The documented
+`cf-mitigated: challenge` response header is authoritative. Headerless fallbacks
+inspect HTML interstitials, not JSON article text or nonblocking JavaScript
+Detection scripts injected into successful pages. Genuine challenges still stop
+the scrape and withhold releases after bounded retries.
+
+Retry/failure logs and smoke JSON now include a sanitized `request` diagnostic
+(the log field is named `diagnostic`): endpoint category (`article`,
+`breadcrumbs`, `article-info`, `sitemap`, or `other`), transport, and where
+available HTTP status, content-type category and challenge detection reason
+(`header`, `title`, or `body`). No tag names, URLs, query values, raw headers,
+bodies or cookies are included. Endpoint categories distinguish which of the
+three article requests failed; a successful homepage/session is not proof that
+every API is accessible.
+
+The October 31 incident logs show browser readiness and successful sitemap
+requests, followed by article-request challenges. They do not contain response
+metadata sufficient to prove the exact endpoint or the site's blocking rule.
+These changes fix known classification/backoff defects and reduce bursts; a
+successful authorized live smoke is still required to confirm recovery. If the
+site continues denying access, stop and seek an approved data-access path rather
+than increasing retries, changing identities or weakening the release guard.
+
+## Full workflow validation without publication
+
+Run **Scrape All** manually on the candidate branch with `publish_release=false`
+and `require_complete=true` (both are the manual defaults). It downloads and
+integrity-checks a copy of the latest released database, discovers the full
+sitemap, and processes the entire normal pending/new/updated article queue. It
+does not re-fetch every unchanged historical article. Valid DB and outcome
+artifacts are retained even if validation fails.
+
+The final validation step requires a valid finalized `complete` outcome, all
+selected entries accounted for, zero failed articles, at least one successful
+article write, successful scraper/backup steps and nonempty database counts. A
+clean timed partial run, a blocked run, and an empty/no-progress queue therefore
+fail this full-run validation instead of appearing green.
+
+Release publication is restricted to the default branch. Manual runs
+additionally require explicit `publish_release=true`; scheduled default-branch
+runs retain the existing complete-or-clean-timed-partial release policy. The
+scrape job has read-only repository permissions; only the separately gated
+release job can write release assets. Full validation is not itself permission
+to publish.
+
+A shared workflow concurrency group prevents candidate/default-branch full runs
+using this workflow version from overlapping and never cancels a running scrape.
+This replaces the racy previous-run array-index polling. Before validating an
+unmerged version, also check for active older production runs: the old workflow
+does not participate in the new concurrency group.

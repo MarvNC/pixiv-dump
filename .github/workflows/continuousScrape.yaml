@@ -4,6 +4,23 @@ on:
   schedule:
     - cron: '0 */6 * * *'
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: Publish a release (default branch only)
+        type: boolean
+        default: false
+      require_complete:
+        description: Fail unless all pending articles are processed successfully
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: pixiv-full-scrape
+  cancel-in-progress: false
 
 jobs:
   scrape:
@@ -23,49 +40,6 @@ jobs:
       - name: Get time of 5.9 hours from now
         id: get_time_details
         run: echo "time_nextrun=$(($(date +%s) + 21240))" >> "$GITHUB_OUTPUT"
-
-      - name: Get previous run ID
-        id: get_run_id
-        run: |
-          RUN_ID=$(curl --fail --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/continuousScrape.yaml/runs" \
-            | jq -r '.workflow_runs[1].id // empty')
-          echo "Previous run ID: $RUN_ID"
-          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-
-      - name: Wait for previous run to complete
-        run: |
-          RUN_ID="${{ steps.get_run_id.outputs.run_id }}"
-          if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
-            echo "No previous run"
-            exit 0
-          fi
-          while : ; do
-            RUN_JSON=$(curl --fail --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID")
-            STATUS=$(echo "$RUN_JSON" | jq -r '.status // empty')
-            echo "Previous run status: $STATUS"
-            if [[ "$STATUS" == "completed" || -z "$STATUS" ]]; then
-              break
-            fi
-            if [[ "$STATUS" == "queued" ]]; then
-              CREATED_AT=$(echo "$RUN_JSON" | jq -r '.created_at // empty')
-              CREATED_EPOCH=$(date -d "$CREATED_AT" +%s 2>/dev/null || echo 0)
-              AGE_SECONDS=$(($(date +%s) - CREATED_EPOCH))
-              JOB_COUNT=$(curl --fail --silent --show-error -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runs/$RUN_ID/jobs?per_page=1" \
-                | jq '.total_count // 0')
-              if (( JOB_COUNT == 0 && AGE_SECONDS >= 900 )); then
-                echo "Ignoring stale queued previous run $RUN_ID with no jobs after ${AGE_SECONDS}s"
-                break
-              fi
-            fi
-            if (( $(date +%s) >= ${{ steps.get_time_details.outputs.time_nextrun }} - 300 )); then
-              echo "Previous run did not finish within this slot"
-              exit 1
-            fi
-            sleep 60
-          done
 
       - name: Download pixiv.db from latest release
         id: previous_db
@@ -162,12 +136,30 @@ jobs:
           path: scrape-outcome.json
           if-no-files-found: error
 
+      - name: Require a complete full-scrape validation
+        if:
+          always() && github.event_name == 'workflow_dispatch' &&
+          inputs.require_complete
+        env:
+          COMPLETE: ${{ steps.report.outputs.complete }}
+          REPORT_RESULT: ${{ steps.report.outcome }}
+        run: |
+          if [[ "$REPORT_RESULT" != 'success' || "$COMPLETE" != 'true' ]]; then
+            echo 'Full scrape did not complete. Inspect the outcome and retained DB artifacts.'
+            exit 1
+          fi
+
   release:
+    permissions:
+      contents: write
+      actions: read
     runs-on: ubuntu-latest
     needs: scrape
     if:
-      needs.scrape.result == 'success' && needs.scrape.outputs.release_eligible
-      == 'true'
+      github.ref_name == github.event.repository.default_branch &&
+      (github.event_name == 'schedule' || (github.event_name ==
+      'workflow_dispatch' && inputs.publish_release)) && needs.scrape.result ==
+      'success' && needs.scrape.outputs.release_eligible == 'true'
     steps:
       - name: Get Current Date
         id: date

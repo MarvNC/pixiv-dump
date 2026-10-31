@@ -196,6 +196,7 @@ test('persistent challenge response bodies still throw CloudflareError', async (
   fixture.page.evaluate.mockResolvedValue({
     ...RESPONSE,
     text: CHALLENGE_BODY,
+    contentType: 'text/html',
   });
 
   await expect(fetchWithBrowser(TARGET_URL)).rejects.toBeInstanceOf(
@@ -208,7 +209,11 @@ test('persistent challenge response bodies still throw CloudflareError', async (
 test('a navigation retry does not turn a persistent challenge into success', async () => {
   fixture.page.evaluate
     .mockRejectedValueOnce(navigationError())
-    .mockResolvedValue({ ...RESPONSE, text: CHALLENGE_BODY });
+    .mockResolvedValue({
+      ...RESPONSE,
+      text: CHALLENGE_BODY,
+      contentType: 'text/html',
+    });
 
   await expect(fetchWithBrowser(TARGET_URL)).rejects.toBeInstanceOf(
     CloudflareError,
@@ -218,7 +223,11 @@ test('a navigation retry does not turn a persistent challenge into success', asy
 
 test('accepts an untitled JSON document after the challenge-response fallback', async () => {
   fixture.page.evaluate
-    .mockResolvedValueOnce({ ...RESPONSE, text: CHALLENGE_BODY })
+    .mockResolvedValueOnce({
+      ...RESPONSE,
+      text: CHALLENGE_BODY,
+      contentType: 'text/html',
+    })
     .mockResolvedValue({
       status: 200,
       text: '{}',
@@ -310,6 +319,7 @@ test('a sitemap challenge after a timed-out homepage wait carries its remaining 
     fixture.page.evaluate.mockResolvedValueOnce({
       ...RESPONSE,
       text: CHALLENGE_BODY,
+      contentType: 'text/html',
     });
     fixture.page.goto.mockImplementation(async () => {
       fixture.location.href = TARGET_URL;
@@ -439,6 +449,7 @@ test('challenge errors and solve logs omit page URLs, titles, and cookie names',
     fixture.page.evaluate.mockResolvedValue({
       ...RESPONSE,
       text: CHALLENGE_BODY,
+      contentType: 'text/html',
     });
     try {
       await fetchWithBrowser(fixture.location.href);
@@ -473,4 +484,40 @@ test('cleanup hangs are bounded and reported rather than silently succeeding', a
   });
   expect(fixture.page.close).toHaveBeenCalledTimes(1);
   expect(fixture.browser.close).toHaveBeenCalledTimes(1);
+});
+
+test('a header-only browser challenge is rejected with a conservative cooldown', async () => {
+  const response = { ...RESPONSE, cfMitigated: 'challenge' };
+  fixture.page.evaluate.mockResolvedValue(response);
+  await expect(fetchWithBrowser(TARGET_URL)).rejects.toMatchObject({
+    name: 'CloudflareError',
+    retryAfterMs: 60_000,
+  });
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
+});
+
+test('a body-only HTML challenge gets a cooldown even with a normal page title', async () => {
+  fixture.page.evaluate.mockResolvedValue({
+    status: 403,
+    text: '<html><title>Verification</title><script src="/challenge-platform"></script></html>',
+    contentType: 'text/html',
+  });
+  await expect(fetchWithBrowser(TARGET_URL)).rejects.toMatchObject({
+    name: 'CloudflareError',
+    retryAfterMs: 60_000,
+  });
+  expect(fixture.document.title).toBe(PAGE_TITLE);
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
+});
+
+test('browser JSON with quoted challenge markers is accepted without navigation', async () => {
+  const response = {
+    status: 200,
+    text: JSON.stringify({ article: CHALLENGE_BODY }),
+    contentType: 'application/json',
+  };
+  fixture.page.evaluate.mockResolvedValue(response);
+  expect(await fetchWithBrowser(TARGET_URL)).toEqual(response);
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
+  expect(fixture.page.goto).not.toHaveBeenCalled();
 });

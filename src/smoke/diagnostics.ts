@@ -1,3 +1,4 @@
+import { fetchDiagnostic } from '../fetch/diagnostics';
 import {
   CloudflareError,
   fetchErrorCategory,
@@ -18,6 +19,7 @@ export function sanitizedSmokeError(error: unknown) {
   // serialize the error, its message/stack/cause, response bodies, or headers.
   return {
     category,
+    ...(fetchDiagnostic(error) ? { request: fetchDiagnostic(error) } : {}),
     ...(error instanceof HttpError &&
     Number.isInteger(error.status) &&
     error.status >= 100 &&

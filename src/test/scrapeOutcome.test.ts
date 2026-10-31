@@ -125,6 +125,7 @@ test('workflow release guard accepts completed useful work and reports counts', 
   const result = await workflowReport(completeOutcome());
   expect(result.outputs).toContain('release_eligible=true');
   expect(result.summary).toContain('Processed: 3/3');
+  expect(result.outputs).toContain('complete=true');
 });
 
 for (const kind of [
@@ -165,6 +166,7 @@ for (const kind of [
     );
     expect(result.outputs).toContain('release_eligible=false');
     expect(result.summary).toContain('Release eligible: **false**');
+    expect(result.outputs).toContain('complete=false');
   });
 }
 
@@ -176,6 +178,7 @@ test('a clean timed partial scrape can release useful work, never an unfinished 
   expect((await workflowReport(report)).outputs).toContain(
     'release_eligible=true',
   );
+  expect((await workflowReport(report)).outputs).toContain('complete=false');
   report.finalized = false;
   expect((await workflowReport(report)).outputs).toContain(
     'release_eligible=false',

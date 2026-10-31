@@ -494,3 +494,61 @@ test('recognizes an HTTP 200 challenge title without a challenge-platform marker
   expect(solveCloudflare).toHaveBeenCalledTimes(1);
   expect(fetchWithBrowser).toHaveBeenCalledTimes(1);
 });
+
+test('HTTP mitigation header triggers browser handoff without body markers', async () => {
+  fixture.fetch.mockResolvedValue({
+    status: 403,
+    text: async () => 'Verification required',
+    headers: new Headers({
+      'content-type': 'text/html',
+      'cf-mitigated': 'challenge',
+    }),
+  });
+  expect(await fetchURL(TARGET_URL)).toEqual({
+    status: 200,
+    data: { tag_name: 'example' },
+  });
+  expect(solveCloudflare).toHaveBeenCalledTimes(1);
+  expect(fetchWithBrowser).toHaveBeenCalledTimes(1);
+});
+
+test('HTTP JSON with quoted challenge markers does not trigger browser handoff', async () => {
+  const article = { article: CHALLENGE_BODY };
+  fixture.fetch.mockResolvedValue({
+    status: 200,
+    text: async () => JSON.stringify(article),
+    headers: new Headers({ 'content-type': 'application/json' }),
+  });
+  expect(await fetchURL(TARGET_URL)).toEqual({ status: 200, data: article });
+  expect(solveCloudflare).not.toHaveBeenCalled();
+  expect(fetchWithBrowser).not.toHaveBeenCalled();
+});
+
+test('spaces queued requests from the previous completion and resets on close', async () => {
+  let now = 1_000_000;
+  const clock = spyOn(Date, 'now').mockImplementation(() => now);
+  sleeps.mockImplementation(async (ms) => {
+    now += ms;
+  });
+  const starts: number[] = [];
+  fixture.fetch.mockImplementation(async () => {
+    starts.push(now);
+    now += 250;
+    return {
+      status: 200,
+      text: async () => '{}',
+      headers: new Headers({ 'content-type': 'application/json' }),
+    };
+  });
+  try {
+    await Promise.all([fetchURL(TARGET_URL), fetchURL(TARGET_URL)]);
+    expect(starts).toEqual([1_000_000, 1_001_250]);
+    expect(sleeps.mock.calls.map(([ms]) => ms)).toEqual([1000]);
+    await closeSession();
+    await fetchURL(TARGET_URL);
+    expect(starts).toEqual([1_000_000, 1_001_250, 1_001_500]);
+    expect(sleeps).toHaveBeenCalledTimes(1);
+  } finally {
+    clock.mockRestore();
+  }
+});
