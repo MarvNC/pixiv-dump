@@ -1,5 +1,7 @@
 import { PIXIV_BASE_URL } from '../constants';
 import { FetchBudget, REQUEST_TIMEOUT_MS } from './budget';
+import { challengeEvidence, type ChallengeResponse } from './challenge';
+import { recordFetchDiagnostic } from './diagnostics';
 import {
   CloudflareError,
   FetchSetupError,
@@ -14,6 +16,7 @@ type PlaywrightPage = import('playwright').Page;
 const PAGE_READY_TIMEOUT_MS = 15_000;
 const MAX_NAVIGATION_ATTEMPTS = 3;
 const CHALLENGE_WAIT_COOLDOWN_MS = 180_000;
+const CHALLENGE_RESPONSE_COOLDOWN_MS = 60_000;
 
 let browser: PlaywrightBrowser | null = null;
 let context: PlaywrightContext | null = null;
@@ -111,17 +114,28 @@ function isChallengeTitle(title: string): boolean {
   );
 }
 
-function isChallengeBody(text: string): boolean {
-  return (
-    /<title>\s*Just a moment\.+\s*<\/title>/i.test(text) ||
-    /<title>\s*しばらくお待ちください/.test(text) ||
-    /challenge-platform/i.test(text)
-  );
-}
-
-export function throwIfChallengeBody(_url: string, text: string): void {
-  if (isChallengeBody(text))
-    throw browserChallengeError('Cloudflare challenge response');
+export function throwIfChallengeBody(
+  url: string,
+  text: string,
+  status = 200,
+  contentType = 'text/html',
+  cfMitigated?: string | null,
+): void {
+  const response = { status, text, contentType, cfMitigated };
+  const reason = challengeEvidence(response);
+  if (reason) {
+    // A response challenge can persist without a challenge document title.
+    // Apply the same conservative backoff rather than retrying in 5/15 seconds.
+    const error = new CloudflareError(
+      'Cloudflare challenge response',
+      Math.max(
+        CHALLENGE_RESPONSE_COOLDOWN_MS,
+        browserChallengeError().retryAfterMs,
+      ),
+    );
+    recordFetchDiagnostic(error, url, 'browser', response, reason);
+    throw error;
+  }
 }
 
 async function waitForChallengeClear(
@@ -255,7 +269,7 @@ async function pageFetch(
   p: PlaywrightPage,
   url: string,
   budget: FetchBudget,
-): Promise<{ status: number; text: string; contentType: string }> {
+): Promise<ChallengeResponse> {
   return budget.run(
     (timeoutMs) =>
       p.evaluate(
@@ -271,6 +285,7 @@ async function pageFetch(
               status: res.status,
               text: await res.text(),
               contentType: res.headers.get('content-type') || '',
+              cfMitigated: res.headers.get('cf-mitigated') || '',
             };
           } finally {
             clearTimeout(timer);
@@ -310,21 +325,34 @@ export async function solveCloudflare(
 export async function fetchWithBrowser(
   url: string,
   budget = new FetchBudget(),
-): Promise<{ status: number; text: string; contentType: string }> {
+): Promise<ChallengeResponse> {
   const p = await getPage(budget);
   return retryAfterNavigation(p, budget, async () => {
     await ensureClearedPage(p, budget);
     let result = await pageFetch(p, url, budget);
-    if (isChallengeBody(result.text)) {
-      await budget.run(
-        (timeout) => p.goto(url, { waitUntil: 'domcontentloaded', timeout }),
-        REQUEST_TIMEOUT_MS,
-      );
-      await waitForChallengeClear(p, budget);
-      await waitForReadyPage(p, budget);
-      result = await pageFetch(p, url, budget);
+    const evidence = challengeEvidence(result);
+    if (evidence) {
+      try {
+        await budget.run(
+          (timeout) => p.goto(url, { waitUntil: 'domcontentloaded', timeout }),
+          REQUEST_TIMEOUT_MS,
+        );
+        await waitForChallengeClear(p, budget);
+        await waitForReadyPage(p, budget);
+        result = await pageFetch(p, url, budget);
+      } catch (error) {
+        if (error instanceof CloudflareError)
+          recordFetchDiagnostic(error, url, 'browser', result, evidence);
+        throw error;
+      }
     }
-    throwIfChallengeBody(url, result.text);
+    throwIfChallengeBody(
+      url,
+      result.text,
+      result.status,
+      result.contentType,
+      result.cfMitigated,
+    );
     return result;
   });
 }
