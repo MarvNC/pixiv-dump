@@ -79,6 +79,7 @@ def evaluate(report, scrape, checkpoint, previous, budget):
     report['workflow'] = {
         'scrape': scrape, 'checkpoint': checkpoint, 'previousDatabase': previous,
         'reportValid': valid, 'releaseEligible': eligible,
+        'complete': eligible and complete,
     }
     return report
 
@@ -115,6 +116,7 @@ def main():
     if os.getenv('GITHUB_OUTPUT'):
         with open(os.environ['GITHUB_OUTPUT'], 'a') as handle:
             handle.write(f'release_eligible={eligible}\n')
+            handle.write(f"complete={str(report['workflow']['complete']).lower()}\n")
 
 
 if __name__ == '__main__':

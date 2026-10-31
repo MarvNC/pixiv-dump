@@ -128,3 +128,31 @@ These changes fix known classification/backoff defects and reduce bursts; a
 successful authorized live smoke is still required to confirm recovery. If the
 site continues denying access, stop and seek an approved data-access path rather
 than increasing retries, changing identities or weakening the release guard.
+
+## Full workflow validation without publication
+
+Run **Scrape All** manually on the candidate branch with `publish_release=false`
+and `require_complete=true` (both are the manual defaults). It downloads and
+integrity-checks a copy of the latest released database, discovers the full
+sitemap, and processes the entire normal pending/new/updated article queue. It
+does not re-fetch every unchanged historical article. Valid DB and outcome
+artifacts are retained even if validation fails.
+
+The final validation step requires a valid finalized `complete` outcome, all
+selected entries accounted for, zero failed articles, at least one successful
+article write, successful scraper/backup steps and nonempty database counts. A
+clean timed partial run, a blocked run, and an empty/no-progress queue therefore
+fail this full-run validation instead of appearing green.
+
+Release publication is restricted to the default branch. Manual runs
+additionally require explicit `publish_release=true`; scheduled default-branch
+runs retain the existing complete-or-clean-timed-partial release policy. The
+scrape job has read-only repository permissions; only the separately gated
+release job can write release assets. Full validation is not itself permission
+to publish.
+
+A shared workflow concurrency group prevents candidate/default-branch full runs
+using this workflow version from overlapping and never cancels a running scrape.
+This replaces the racy previous-run array-index polling. Before validating an
+unmerged version, also check for active older production runs: the old workflow
+does not participate in the new concurrency group.
