@@ -131,7 +131,6 @@ test('workflow release guard accepts completed useful work and reports counts', 
 for (const kind of [
   'missing',
   'invalid',
-  'no-progress',
   'failed',
   'unfinished',
   'checkpoint-failed',
@@ -141,10 +140,6 @@ for (const kind of [
 ] as const) {
   test(`workflow release guard rejects ${kind} and still publishes a summary`, async () => {
     const report = completeOutcome();
-    if (kind === 'no-progress') {
-      report.counts.successful = 0;
-      report.counts.skipped++;
-    }
     if (kind === 'failed') {
       report.counts.successful = 0;
       report.counts.failed++;
@@ -169,6 +164,86 @@ for (const kind of [
     expect(result.outputs).toContain('complete=false');
   });
 }
+
+for (const empty of [true, false]) {
+  test(`healthy ${empty ? 'empty' : 'benign-only'} queue passes completion without a release`, async () => {
+    const report = completeOutcome();
+    if (empty) {
+      report.counts = {
+        total: 0,
+        processed: 0,
+        successful: 0,
+        failed: 0,
+        notFound: 0,
+        skipped: 0,
+      };
+    } else {
+      report.counts.successful = 0;
+      report.counts.skipped++;
+    }
+    const result = await workflowReport(report);
+    expect(result.outputs).toContain('complete=true');
+    expect(result.outputs).toContain('release_eligible=false');
+    expect(result.report.workflow.complete).toBe(true);
+    expect(result.report.workflow.releaseEligible).toBe(false);
+  });
+}
+
+for (const failure of [
+  'setup',
+  'checkpoint',
+  'process',
+  'cleanup',
+  'unfinished',
+  'error',
+  'empty-db',
+  'malformed',
+] as const) {
+  test(`empty queue cannot hide ${failure} failure`, async () => {
+    const report = completeOutcome();
+    report.counts = {
+      total: 0,
+      processed: 0,
+      successful: 0,
+      failed: 0,
+      notFound: 0,
+      skipped: 0,
+    };
+    if (failure === 'cleanup') report.cleanupErrors.push('cleanup failed');
+    if (failure === 'unfinished') report.finalized = false;
+    if (failure === 'error') report.error = 'fatal-error';
+    if (failure === 'empty-db') report.database.before = 0;
+    if (failure === 'malformed') report.counts.processed = 1;
+    const env: Record<string, string> =
+      failure === 'setup'
+        ? { PREVIOUS_DB_RESULT: 'failure' }
+        : failure === 'checkpoint'
+          ? { CHECKPOINT_RESULT: 'failure' }
+          : failure === 'process'
+            ? { SCRAPE_RESULT: 'failure' }
+            : {};
+    const result = await workflowReport(report, env);
+    expect(result.outputs).toContain('complete=false');
+    expect(result.outputs).toContain('release_eligible=false');
+  });
+}
+
+test('empty timed partial remains incomplete and ineligible for release', async () => {
+  const report = completeOutcome();
+  report.counts = {
+    total: 1,
+    processed: 0,
+    successful: 0,
+    failed: 0,
+    notFound: 0,
+    skipped: 0,
+  };
+  report.status = 'partial';
+  report.stopReason = 'timeout';
+  const result = await workflowReport(report);
+  expect(result.outputs).toContain('complete=false');
+  expect(result.outputs).toContain('release_eligible=false');
+});
 
 test('a clean timed partial scrape can release useful work, never an unfinished one', async () => {
   const report = completeOutcome();
