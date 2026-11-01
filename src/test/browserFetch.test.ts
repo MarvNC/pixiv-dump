@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { runInNewContext } from 'node:vm';
-import { chromium, type Browser } from 'playwright';
+import { chromium, type Browser, type Response } from 'playwright';
 import { PIXIV_BASE_URL } from '../constants';
 import { CloudflareError, FetchCleanupError } from '../fetch/errors';
 import { FetchBudget } from '../fetch/budget';
@@ -36,11 +36,36 @@ function makeBrowser() {
   const document = { title: PAGE_TITLE, readyState: 'complete' };
   const location = { href: PIXIV_BASE_URL, pathname: '/' };
   let closed = false;
+  const frame = {};
+  const listeners = new Set<(response: Response) => void>();
+  const navigationResponse = (
+    url: string,
+    response = RESPONSE,
+    mainFrame = true,
+    navigation = true,
+  ) => ({
+    url: () => url,
+    request: () => ({ isNavigationRequest: () => navigation }),
+    frame: () => (mainFrame ? frame : {}),
+    status: () => response.status,
+    text: mock(async () => response.text),
+    allHeaders: mock(async () => ({ 'content-type': response.contentType })),
+  });
+  const emitResponse = (response: ReturnType<typeof navigationResponse>) => {
+    for (const listener of listeners) listener(response as unknown as Response);
+  };
   const page = {
     isClosed: () => closed,
     url: () => location.href,
     title: mock(async () => document.title),
-    goto: mock(async () => undefined),
+    mainFrame: () => frame,
+    on: mock((_event: string, listener: (response: Response) => void) => {
+      listeners.add(listener);
+    }),
+    off: mock((_event: string, listener: (response: Response) => void) => {
+      listeners.delete(listener);
+    }),
+    goto: mock(async (): Promise<Response | undefined> => undefined),
     waitForLoadState: mock(async () => undefined),
     waitForTimeout: mock(async () => undefined),
     waitForFunction: mock(
@@ -78,7 +103,16 @@ function makeBrowser() {
     newContext: mock(async () => context),
     close: mock(async () => undefined),
   };
-  return { document, location, page, context, browser };
+  return {
+    document,
+    location,
+    page,
+    context,
+    browser,
+    navigationResponse,
+    emitResponse,
+    listeners,
+  };
 }
 
 let fixture: ReturnType<typeof makeBrowser>;
@@ -202,7 +236,7 @@ test('persistent challenge response bodies still throw CloudflareError', async (
   await expect(fetchWithBrowser(TARGET_URL)).rejects.toBeInstanceOf(
     CloudflareError,
   );
-  expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
   expect(fixture.page.goto).toHaveBeenCalledTimes(1);
 });
 
@@ -214,43 +248,33 @@ test('a navigation retry does not turn a persistent challenge into success', asy
       text: CHALLENGE_BODY,
       contentType: 'text/html',
     });
-
   await expect(fetchWithBrowser(TARGET_URL)).rejects.toBeInstanceOf(
     CloudflareError,
   );
-  expect(fixture.page.evaluate).toHaveBeenCalledTimes(3);
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
 });
 
-test('accepts an untitled JSON document after the challenge-response fallback', async () => {
-  fixture.page.evaluate
-    .mockResolvedValueOnce({
-      ...RESPONSE,
-      text: CHALLENGE_BODY,
-      contentType: 'text/html',
-    })
-    .mockResolvedValue({
-      status: 200,
-      text: '{}',
-      contentType: 'application/json',
-    });
+test('uses an untitled JSON navigation response instead of another challenged XHR', async () => {
+  const target = `${PIXIV_BASE_URL}_api/get_article/example`;
+  const json = { status: 200, text: '{}', contentType: 'application/json' };
+  fixture.page.evaluate.mockResolvedValue({
+    ...RESPONSE,
+    text: CHALLENGE_BODY,
+    contentType: 'text/html',
+  });
   fixture.page.goto.mockImplementation(async () => {
-    fixture.location.href = `${PIXIV_BASE_URL}_api/get_article/example`;
+    fixture.location.href = target;
     fixture.location.pathname = '/_api/get_article/example';
     fixture.document.title = '';
+    const response = fixture.navigationResponse(target, json);
+    fixture.emitResponse(response);
+    return response as unknown as Response;
   });
-
-  expect(await fetchWithBrowser(fixture.location.href)).toEqual({
-    status: 200,
-    text: '{}',
-    contentType: 'application/json',
-  });
-  expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
-  // The same untitled document must also be reusable for the next fetch.
-  expect(await fetchWithBrowser(TARGET_URL)).toEqual({
-    status: 200,
-    text: '{}',
-    contentType: 'application/json',
-  });
+  expect(await fetchWithBrowser(target)).toEqual({ ...json, cfMitigated: '' });
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
+  expect(fixture.listeners.size).toBe(0);
+  fixture.page.evaluate.mockResolvedValue(RESPONSE);
+  expect(await fetchWithBrowser(TARGET_URL)).toEqual(RESPONSE);
   expect(fixture.page.goto).toHaveBeenCalledTimes(1);
 });
 
@@ -325,6 +349,7 @@ test('a sitemap challenge after a timed-out homepage wait carries its remaining 
       fixture.location.href = TARGET_URL;
       fixture.location.pathname = '/sitemap.xml';
       fixture.document.title = 'Just a moment...';
+      return undefined;
     });
 
     await expect(fetchWithBrowser(TARGET_URL)).rejects.toMatchObject({
@@ -493,7 +518,7 @@ test('a header-only browser challenge is rejected with a conservative cooldown',
     name: 'CloudflareError',
     retryAfterMs: 60_000,
   });
-  expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
 });
 
 test('a body-only HTML challenge gets a cooldown even with a normal page title', async () => {
@@ -507,7 +532,7 @@ test('a body-only HTML challenge gets a cooldown even with a normal page title',
     retryAfterMs: 60_000,
   });
   expect(fixture.document.title).toBe(PAGE_TITLE);
-  expect(fixture.page.evaluate).toHaveBeenCalledTimes(2);
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
 });
 
 test('browser JSON with quoted challenge markers is accepted without navigation', async () => {
@@ -520,4 +545,166 @@ test('browser JSON with quoted challenge markers is accepted without navigation'
   expect(await fetchWithBrowser(TARGET_URL)).toEqual(response);
   expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
   expect(fixture.page.goto).not.toHaveBeenCalled();
+});
+
+for (const kind of [
+  'reload',
+  'challenge',
+  'unrelated',
+  'subframe',
+  'xhr',
+  'plain403',
+  'body-timeout',
+]) {
+  test(`navigation fallback handles ${kind} without trusting an unrelated or stale body`, async () => {
+    fixture.page.evaluate.mockResolvedValue({
+      ...RESPONSE,
+      status: 403,
+      text: CHALLENGE_BODY,
+      contentType: 'text/html',
+    });
+    const challenge = {
+      ...RESPONSE,
+      status: 403,
+      text: CHALLENGE_BODY,
+      contentType: 'text/html',
+    };
+    const final =
+      kind === 'challenge'
+        ? challenge
+        : kind === 'plain403'
+          ? {
+              ...RESPONSE,
+              status: 403,
+              text: 'Forbidden',
+              contentType: 'text/plain',
+            }
+          : RESPONSE;
+    fixture.page.goto.mockImplementation(async () => {
+      fixture.location.href = TARGET_URL;
+      fixture.location.pathname = '/sitemap.xml';
+      const first = fixture.navigationResponse(TARGET_URL, challenge);
+      fixture.emitResponse(first);
+      const response = fixture.navigationResponse(
+        kind === 'unrelated' ? `${PIXIV_BASE_URL}other` : TARGET_URL,
+        final,
+        kind !== 'subframe',
+        kind !== 'xhr',
+      );
+      if (kind === 'body-timeout')
+        response.text.mockImplementation(() => new Promise(() => undefined));
+      fixture.emitResponse(response);
+      return first as unknown as Response;
+    });
+    if (kind === 'reload' || kind === 'plain403') {
+      expect(await fetchWithBrowser(TARGET_URL)).toEqual({
+        ...final,
+        cfMitigated: '',
+      });
+    } else if (kind === 'body-timeout') {
+      await expect(
+        fetchWithBrowser(TARGET_URL, new FetchBudget(25)),
+      ).rejects.toMatchObject({
+        name: 'FetchTimeoutError',
+        budgetExhausted: true,
+      });
+      expect(fixture.page.close).toHaveBeenCalledTimes(1);
+    } else {
+      await expect(fetchWithBrowser(TARGET_URL)).rejects.toBeInstanceOf(
+        CloudflareError,
+      );
+    }
+    expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
+    expect(fixture.listeners.size).toBe(0);
+  });
+}
+
+test('uses a successful challenge reload after goto already returned its 403 response', async () => {
+  fixture.page.evaluate.mockResolvedValue({
+    ...RESPONSE,
+    status: 403,
+    text: CHALLENGE_BODY,
+    contentType: 'text/html',
+  });
+  fixture.page.goto.mockImplementation(async () => {
+    fixture.location.href = TARGET_URL;
+    fixture.location.pathname = '/sitemap.xml';
+    fixture.document.title = 'Just a moment...';
+    const response = fixture.navigationResponse(TARGET_URL, {
+      ...RESPONSE,
+      status: 403,
+      text: CHALLENGE_BODY,
+      contentType: 'text/html',
+    });
+    fixture.emitResponse(response);
+    return response as unknown as Response;
+  });
+  const wait = fixture.page.waitForFunction.getMockImplementation()!;
+  fixture.page.waitForFunction.mockImplementation(async (...args) => {
+    if (fixture.document.title === 'Just a moment...') {
+      fixture.emitResponse(fixture.navigationResponse(TARGET_URL));
+      fixture.document.title = '';
+    }
+    return wait(...args);
+  });
+  expect(await fetchWithBrowser(TARGET_URL)).toEqual({
+    ...RESPONSE,
+    cfMitigated: '',
+  });
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
+  expect(fixture.listeners.size).toBe(0);
+});
+
+for (const change of ['redirect', 'new-response']) {
+  test(`does not reuse a target response after ${change} while reading its body`, async () => {
+    fixture.page.evaluate.mockResolvedValue({
+      ...RESPONSE,
+      status: 403,
+      text: CHALLENGE_BODY,
+      contentType: 'text/html',
+    });
+    fixture.page.goto.mockImplementation(async () => {
+      fixture.location.href = TARGET_URL;
+      fixture.location.pathname = '/sitemap.xml';
+      const response = fixture.navigationResponse(TARGET_URL);
+      response.text.mockImplementation(async () => {
+        if (change === 'redirect')
+          fixture.location.href = `${PIXIV_BASE_URL}other`;
+        else fixture.emitResponse(fixture.navigationResponse(TARGET_URL));
+        return RESPONSE.text;
+      });
+      fixture.emitResponse(response);
+      return response as unknown as Response;
+    });
+    await expect(fetchWithBrowser(TARGET_URL)).rejects.toBeInstanceOf(
+      CloudflareError,
+    );
+    expect(fixture.listeners.size).toBe(0);
+  });
+}
+
+test('navigation response headers remain authoritative even with a harmless body and title', async () => {
+  fixture.page.evaluate.mockResolvedValue({
+    ...RESPONSE,
+    status: 403,
+    text: CHALLENGE_BODY,
+    contentType: 'text/html',
+  });
+  fixture.page.goto.mockImplementation(async () => {
+    fixture.location.href = TARGET_URL;
+    fixture.location.pathname = '/sitemap.xml';
+    const response = fixture.navigationResponse(TARGET_URL);
+    response.allHeaders.mockResolvedValue({
+      'content-type': 'application/xml',
+      'cf-mitigated': 'challenge',
+    } as { 'content-type': string });
+    fixture.emitResponse(response);
+    return response as unknown as Response;
+  });
+  await expect(fetchWithBrowser(TARGET_URL)).rejects.toMatchObject({
+    name: 'CloudflareError',
+    retryAfterMs: 60_000,
+  });
+  expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
+  expect(fixture.listeners.size).toBe(0);
 });

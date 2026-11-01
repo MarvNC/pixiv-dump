@@ -156,3 +156,18 @@ using this workflow version from overlapping and never cancels a running scrape.
 This replaces the racy previous-run array-index polling. Before validating an
 unmerged version, also check for active older production runs: the old workflow
 does not participate in the new concurrency group.
+
+### Browser navigation responses
+
+Browser session readiness is not proof that a requested endpoint is accessible.
+The readiness log explicitly leaves the target response unverified; every target
+response still passes status, content-type, and challenge-header/body checks.
+When a challenged in-page request falls back to navigation, the scraper uses the
+latest response for that exact target's main-frame navigation (including a
+challenge reload), rather than discarding a successful document and immediately
+making another in-page request. Unrelated redirects, subresources, stale bodies,
+and rendered DOM content are not accepted as substitutes. Navigation body reads
+share the request deadline, and response listeners are removed on every exit.
+Persistent upstream challenges still fail with the existing cooldown and release
+guards; this change does not promise access when the upstream service blocks the
+runner.
