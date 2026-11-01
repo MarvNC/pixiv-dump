@@ -68,18 +68,22 @@ def evaluate(report, scrape, checkpoint, previous, budget):
         and counts['processed'] == counts['total']
     )
     timed_partial = report['status'] == 'partial' and report['stopReason'] == 'timeout'
-    eligible = bool(
+    healthy = bool(
         valid and scrape == 'success' and previous == 'success'
         and checkpoint == 'success' and report['finalized']
-        and 'error' not in report and not report['cleanupErrors'] and counts['successful'] > 0
-        and counts['failed'] == 0 and (complete or timed_partial)
+        and 'error' not in report and not report['cleanupErrors']
+        and counts['failed'] == 0
         and (report['database']['before'] or 0) > 0
         and (report['database']['after'] or 0) > 0
     )
+    # Completion validates the scrape, including a healthy empty queue.
+    # Publication additionally requires useful new work; do not mint duplicate
+    # releases merely to prove that a no-op run is healthy.
+    eligible = healthy and counts['successful'] > 0 and (complete or timed_partial)
     report['workflow'] = {
         'scrape': scrape, 'checkpoint': checkpoint, 'previousDatabase': previous,
         'reportValid': valid, 'releaseEligible': eligible,
-        'complete': eligible and complete,
+        'complete': healthy and complete,
     }
     return report
 

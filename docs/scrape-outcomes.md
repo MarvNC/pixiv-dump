@@ -139,10 +139,13 @@ does not re-fetch every unchanged historical article. Valid DB and outcome
 artifacts are retained even if validation fails.
 
 The final validation step requires a valid finalized `complete` outcome, all
-selected entries accounted for, zero failed articles, at least one successful
-article write, successful scraper/backup steps and nonempty database counts. A
-clean timed partial run, a blocked run, and an empty/no-progress queue therefore
-fail this full-run validation instead of appearing green.
+selected entries accounted for, zero failed articles, successful scraper/backup
+steps and nonempty database counts. A healthy empty queue (0/0), or a queue
+containing only benign missing/ignored entries, passes validation without
+publishing a duplicate release. Publication separately requires at least one
+successful article write. A clean timed partial run or a blocked run still fails
+full-run validation; malformed reports, failed setup/process/checkpoint steps,
+and cleanup errors cannot be hidden by an empty queue.
 
 Release publication is restricted to the default branch. Manual runs
 additionally require explicit `publish_release=true`; scheduled default-branch
