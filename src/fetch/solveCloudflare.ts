@@ -12,6 +12,7 @@ import {
 type PlaywrightBrowser = import('playwright').Browser;
 type PlaywrightContext = import('playwright').BrowserContext;
 type PlaywrightPage = import('playwright').Page;
+type PlaywrightResponse = import('playwright').Response;
 
 const PAGE_READY_TIMEOUT_MS = 15_000;
 const MAX_NAVIGATION_ATTEMPTS = 3;
@@ -317,9 +318,64 @@ export async function solveCloudflare(
       !/^\s*Loading(?:\s|$)/i.test(title) &&
       (title.trim() !== '' || new URL(url).pathname !== '/') &&
       (await hasPixivSession(budget));
-    console.log(`Cloudflare browser solve ${ready ? 'ok' : 'not ready'}`);
+    console.log(
+      `Browser session ${ready ? 'ready (target response unverified)' : 'not ready'}`,
+    );
     return ready;
   });
+}
+
+// Observe only the requested main-frame document. A challenge can reload the
+// document after goto resolves, so the last response (not goto's first response)
+// is authoritative. Never substitute a subresource, unrelated redirect, or DOM
+// serialization for the server's response body.
+async function navigateForResponse(
+  p: PlaywrightPage,
+  url: string,
+  budget: FetchBudget,
+): Promise<ChallengeResponse | undefined> {
+  let latest: PlaywrightResponse | undefined;
+  const matches = (response: PlaywrightResponse) =>
+    response.url() === url &&
+    response.request().isNavigationRequest() &&
+    response.frame() === p.mainFrame();
+  const observe = (response: PlaywrightResponse) => {
+    if (matches(response)) latest = response;
+  };
+  p.on('response', observe);
+  try {
+    const initial = await budget.run(
+      (timeout) => p.goto(url, { waitUntil: 'domcontentloaded', timeout }),
+      REQUEST_TIMEOUT_MS,
+    );
+    // Normally the event has already fired; retain it for response reloads.
+    if (!latest && initial) observe(initial);
+    await waitForChallengeClear(p, budget);
+    await waitForReadyPage(p, budget);
+    if (!latest || p.url() !== url) return undefined;
+    const response = latest;
+    const result = await budget.run(
+      async () => {
+        const headers = await response.allHeaders();
+        return {
+          status: response.status(),
+          text: await response.text(),
+          contentType: headers['content-type'] || '',
+          cfMitigated: headers['cf-mitigated'] || '',
+        };
+      },
+      REQUEST_TIMEOUT_MS,
+      () => {
+        if (page === p) page = null;
+        void p.close().catch(() => undefined);
+      },
+    );
+    // Do not return an old body if a newer document arrived while reading it.
+    if (latest !== response || p.url() !== url) return undefined;
+    return result;
+  } finally {
+    p.off('response', observe);
+  }
 }
 
 export async function fetchWithBrowser(
@@ -333,13 +389,8 @@ export async function fetchWithBrowser(
     const evidence = challengeEvidence(result);
     if (evidence) {
       try {
-        await budget.run(
-          (timeout) => p.goto(url, { waitUntil: 'domcontentloaded', timeout }),
-          REQUEST_TIMEOUT_MS,
-        );
-        await waitForChallengeClear(p, budget);
-        await waitForReadyPage(p, budget);
-        result = await pageFetch(p, url, budget);
+        const navigation = await navigateForResponse(p, url, budget);
+        if (navigation) result = navigation;
       } catch (error) {
         if (error instanceof CloudflareError)
           recordFetchDiagnostic(error, url, 'browser', result, evidence);
