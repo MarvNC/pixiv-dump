@@ -1,3 +1,4 @@
+import { sanitizedSmokeError } from '../smoke/diagnostics';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import * as wreq from 'wreq-js';
 import * as browser from '../fetch/solveCloudflare';
@@ -551,4 +552,23 @@ test('spaces queued requests from the previous completion and resets on close', 
   } finally {
     clock.mockRestore();
   }
+});
+
+test('HTTP challenge evidence survives a later exhausted browser deadline without changing its category', async () => {
+  const error = new FetchTimeoutError(true);
+  fetchWithBrowser.mockRejectedValue(error);
+  await expect(fetchURL(TARGET_URL)).rejects.toBe(error);
+  expect(sanitizedSmokeError(error)).toEqual({
+    category: 'timeout',
+    budgetExhausted: true,
+    request: {
+      endpoint: 'article',
+      transport: 'browser',
+      precedingChallenge: {
+        httpStatus: 403,
+        contentType: 'html',
+        challengeDetection: 'title',
+      },
+    },
+  });
 });

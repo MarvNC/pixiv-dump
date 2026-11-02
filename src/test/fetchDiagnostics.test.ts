@@ -1,6 +1,11 @@
 import { expect, test } from 'bun:test';
-import { recordFetchDiagnostic, fetchDiagnostic } from '../fetch/diagnostics';
-import { CloudflareError } from '../fetch/errors';
+import {
+  recordFetchDiagnostic,
+  fetchDiagnostic,
+  recordPrecedingChallenge,
+  withFetchOperation,
+} from '../fetch/diagnostics';
+import { CloudflareError, FetchTimeoutError } from '../fetch/errors';
 import { sanitizedSmokeError } from '../smoke/diagnostics';
 
 const SECRET = 'secret-tag-cookie-query-body';
@@ -84,4 +89,79 @@ test('outer failure handling preserves deeper response evidence without exposing
     contentType: 'html',
     challengeDetection: 'title',
   });
+});
+
+test('sanitized operation and historical evidence preserve identity and cannot expose mutable internals', async () => {
+  const error = new FetchTimeoutError(true);
+  const url = `https://dic.pixiv.net/_api/get_article/${SECRET}?token=${SECRET}`;
+  await expect(
+    withFetchOperation('browser-session', () =>
+      withFetchOperation('navigation-response-body', async () => {
+        throw error;
+      }),
+    ),
+  ).rejects.toBe(error);
+  recordPrecedingChallenge(
+    error,
+    url,
+    { status: 403, contentType: `text/html; private=${SECRET}` },
+    'header',
+  );
+  recordPrecedingChallenge(
+    error,
+    url,
+    { status: 200, contentType: 'application/json' },
+    'body',
+  );
+  recordFetchDiagnostic(error, url, 'browser', {
+    status: 200,
+    contentType: 'application/json',
+  });
+  const copy = fetchDiagnostic(error)!;
+  copy.precedingChallenge!.httpStatus = 500;
+  expect(sanitizedSmokeError(error)).toEqual({
+    category: 'timeout',
+    budgetExhausted: true,
+    request: {
+      endpoint: 'article',
+      transport: 'browser',
+      operation: 'navigation-response-body',
+      httpStatus: 200,
+      contentType: 'json',
+      precedingChallenge: {
+        httpStatus: 403,
+        contentType: 'html',
+        challengeDetection: 'header',
+      },
+    },
+  });
+  expect(JSON.stringify(sanitizedSmokeError(error))).not.toContain(SECRET);
+});
+
+test('operation and challenge context reject runtime values outside their allowlists', async () => {
+  const error = new FetchTimeoutError(true);
+  await expect(
+    withFetchOperation(
+      SECRET as Parameters<typeof withFetchOperation>[0],
+      async () => {
+        throw error;
+      },
+    ),
+  ).rejects.toBe(error);
+  recordPrecedingChallenge(
+    error,
+    'https://dic.pixiv.net/sitemap.xml',
+    { status: 123456, contentType: SECRET },
+    SECRET as Parameters<typeof recordPrecedingChallenge>[3],
+  );
+  expect(sanitizedSmokeError(error)).toEqual({
+    category: 'timeout',
+    budgetExhausted: true,
+    request: {
+      endpoint: 'sitemap',
+      transport: 'browser',
+      precedingChallenge: { contentType: 'other' },
+    },
+  });
+  expect(JSON.stringify(sanitizedSmokeError(error))).not.toContain(SECRET);
 });

@@ -1,3 +1,5 @@
+import { fetchDiagnostic, recordFetchDiagnostic } from '../fetch/diagnostics';
+import { sanitizedSmokeError } from '../smoke/diagnostics';
 import { afterEach, beforeEach, expect, mock, spyOn, test } from 'bun:test';
 import { runInNewContext } from 'node:vm';
 import { chromium, type Browser, type Response } from 'playwright';
@@ -49,6 +51,7 @@ function makeBrowser() {
     frame: () => (mainFrame ? frame : {}),
     status: () => response.status,
     text: mock(async () => response.text),
+    headers: () => ({ 'content-type': response.contentType }),
     allHeaders: mock(async () => ({ 'content-type': response.contentType })),
   });
   const emitResponse = (response: ReturnType<typeof navigationResponse>) => {
@@ -706,5 +709,117 @@ test('navigation response headers remain authoritative even with a harmless body
     retryAfterMs: 60_000,
   });
   expect(fixture.page.evaluate).toHaveBeenCalledTimes(1);
+  expect(fixture.listeners.size).toBe(0);
+});
+
+for (const operation of [
+  'target-navigation',
+  'challenge-wait',
+  'navigation-response-body',
+] as const) {
+  test(`shared-budget timeout retains ${operation} and known response evidence`, async () => {
+    const challenge = {
+      status: 403,
+      text: CHALLENGE_BODY,
+      contentType: 'text/html',
+      cfMitigated: 'challenge',
+    };
+    fixture.page.evaluate.mockResolvedValue(challenge);
+    fixture.page.goto.mockImplementation(async () => {
+      fixture.location.href = TARGET_URL;
+      fixture.location.pathname = '/sitemap.xml';
+      const response = fixture.navigationResponse(
+        TARGET_URL,
+        operation === 'navigation-response-body' ? RESPONSE : challenge,
+      );
+      if (operation !== 'navigation-response-body')
+        response.headers = () => ({
+          'content-type': 'text/html',
+          'cf-mitigated': 'challenge',
+        });
+      fixture.emitResponse(response);
+      if (operation === 'target-navigation')
+        return new Promise(() => undefined);
+      if (operation === 'challenge-wait')
+        fixture.document.title = 'Just a moment...';
+      if (operation === 'navigation-response-body')
+        response.text.mockImplementation(() => new Promise(() => undefined));
+      return response as unknown as Response;
+    });
+    const wait = fixture.page.waitForFunction.getMockImplementation()!;
+    fixture.page.waitForFunction.mockImplementation(async (...args) =>
+      fixture.document.title === 'Just a moment...'
+        ? new Promise(() => undefined)
+        : wait(...args),
+    );
+    try {
+      await fetchWithBrowser(TARGET_URL, new FetchBudget(30));
+      throw new Error('Expected deadline exhaustion');
+    } catch (error) {
+      expect(sanitizedSmokeError(error)).toMatchObject({
+        category: 'timeout',
+        budgetExhausted: true,
+        request: {
+          endpoint: 'sitemap',
+          transport: 'browser',
+          operation,
+          httpStatus: operation === 'navigation-response-body' ? 200 : 403,
+          contentType:
+            operation === 'navigation-response-body' ? 'xml' : 'html',
+          precedingChallenge: {
+            httpStatus: 403,
+            contentType: 'html',
+            challengeDetection: 'header',
+          },
+        },
+      });
+      if (operation === 'navigation-response-body')
+        expect(fetchDiagnostic(error)?.challengeDetection).toBeUndefined();
+      else expect(fetchDiagnostic(error)?.challengeDetection).toBe('header');
+    }
+    expect(fixture.listeners.size).toBe(0);
+    if (operation === 'navigation-response-body')
+      expect(fixture.page.close).toHaveBeenCalledTimes(1);
+  });
+}
+
+test('browser request timeout without a response does not invent HTTP or challenge evidence', async () => {
+  fixture.page.evaluate.mockImplementation(() => new Promise(() => undefined));
+  try {
+    await fetchWithBrowser(TARGET_URL, new FetchBudget(30));
+    throw new Error('Expected deadline exhaustion');
+  } catch (error) {
+    // The outer fetchURL handler supplies endpoint and transport.
+    recordFetchDiagnostic(error, TARGET_URL, 'browser');
+    expect(sanitizedSmokeError(error)).toEqual({
+      category: 'timeout',
+      budgetExhausted: true,
+      request: {
+        endpoint: 'sitemap',
+        transport: 'browser',
+        operation: 'browser-request',
+      },
+    });
+  }
+});
+
+test('failure-path diagnostic inspection cannot replace the original timeout', async () => {
+  fixture.page.evaluate.mockResolvedValue({
+    ...RESPONSE,
+    status: 403,
+    text: CHALLENGE_BODY,
+    contentType: 'text/html',
+  });
+  fixture.page.goto.mockImplementation(async () => {
+    const response = fixture.navigationResponse(TARGET_URL);
+    response.headers = () => {
+      throw new Error('diagnostic getter failed');
+    };
+    fixture.emitResponse(response);
+    return new Promise(() => undefined);
+  });
+  await expect(
+    fetchWithBrowser(TARGET_URL, new FetchBudget(30)),
+  ).rejects.toMatchObject({ name: 'FetchTimeoutError', budgetExhausted: true });
   expect(fixture.listeners.size).toBe(0);
 });
