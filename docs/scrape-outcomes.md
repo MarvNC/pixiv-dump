@@ -174,3 +174,23 @@ share the request deadline, and response listeners are removed on every exit.
 Persistent upstream challenges still fail with the existing cooldown and release
 guards; this change does not promise access when the upstream service blocks the
 runner.
+
+### Timeouts after a browser challenge
+
+Timeout diagnostics retain the primary `timeout` category and `budgetExhausted`
+flag. The optional request `operation` is a fixed label for the innermost
+browser operation that failed, such as `browser-request` (including its body
+read), `target-navigation`, `challenge-wait`, or `navigation-response-body`.
+These distinguish a request/body stall from an exhausted challenge wait without
+increasing the shared five-minute budget.
+
+A `precedingChallenge` object separately describes the last known challenged
+response that led into browser recovery. It is historical evidence, not a claim
+that the timed-out operation returned that HTTP status. When available,
+top-level request status/content type/challenge detection describe the last
+observed exact-target main-frame navigation response; a title detection means a
+challenge title was observed when the wait began. They do not establish why the
+upstream service challenged the runner. Only bounded categories/status values
+are retained; URLs, article tags, raw titles, bodies, headers, cookies, and
+error messages are never included. Failure-path collection uses cached response
+metadata rather than starting network or browser work after the deadline.

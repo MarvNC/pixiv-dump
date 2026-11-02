@@ -1,13 +1,36 @@
 import { PIXIV_BASE_URL } from '../constants';
 
+const OPERATIONS = [
+  'browser-session',
+  'homepage-navigation',
+  'challenge-wait',
+  'session-cookie-wait',
+  'document-readiness',
+  'browser-request',
+  'target-navigation',
+  'navigation-response-body',
+] as const;
+type FetchOperation = (typeof OPERATIONS)[number];
+type ResponseDiagnostic = {
+  httpStatus?: number;
+  contentType?: 'json' | 'html' | 'xml' | 'other';
+  challengeDetection?: 'header' | 'title' | 'body';
+};
 type FetchDiagnostic = {
   endpoint: 'article' | 'breadcrumbs' | 'article-info' | 'sitemap' | 'other';
   transport: 'http' | 'browser';
   httpStatus?: number;
   contentType?: 'json' | 'html' | 'xml' | 'other';
   challengeDetection?: 'header' | 'title' | 'body';
+  operation?: FetchOperation;
+  precedingChallenge?: ResponseDiagnostic;
 };
 
+const operations = new WeakMap<Error, FetchOperation>();
+const challengeDetections = new WeakMap<
+  Error,
+  NonNullable<ResponseDiagnostic['challengeDetection']>
+>();
 const diagnostics = new WeakMap<Error, FetchDiagnostic>();
 
 function endpointCategory(url: string): FetchDiagnostic['endpoint'] {
@@ -61,12 +84,76 @@ export function recordFetchDiagnostic(
                   : 'other',
         }
       : {}),
-    ...(challengeDetection ? { challengeDetection } : {}),
+    ...(challengeDetection &&
+    ['header', 'title', 'body'].includes(challengeDetection)
+      ? { challengeDetection }
+      : {}),
   });
+}
+
+// Preserve the innermost active operation without changing error identity or
+// category. The names are fixed labels, never raw browser error messages.
+export async function withFetchOperation<T>(
+  operation: FetchOperation,
+  run: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      !operations.has(error) &&
+      OPERATIONS.includes(operation)
+    ) {
+      operations.set(error, operation);
+    }
+    throw error;
+  }
+}
+
+export function recordChallengeWait(error: unknown): void {
+  if (error instanceof Error) challengeDetections.set(error, 'title');
+}
+
+export function recordPrecedingChallenge(
+  error: unknown,
+  url: string,
+  response: { status: number; contentType: string },
+  challengeDetection: ResponseDiagnostic['challengeDetection'],
+): void {
+  if (!(error instanceof Error)) return;
+  // Reuse the same allowlisted sanitization; historical evidence must not look
+  // like the response of the operation that ultimately timed out.
+  const prior = new Error();
+  recordFetchDiagnostic(prior, url, 'browser', response, challengeDetection);
+  const {
+    httpStatus,
+    contentType,
+    challengeDetection: detection,
+  } = diagnostics.get(prior)!;
+  recordFetchDiagnostic(error, url, 'browser');
+  diagnostics.get(error)!.precedingChallenge ??= {
+    ...(httpStatus !== undefined ? { httpStatus } : {}),
+    ...(contentType ? { contentType } : {}),
+    ...(detection ? { challengeDetection: detection } : {}),
+  };
 }
 
 export function fetchDiagnostic(error: unknown): FetchDiagnostic | undefined {
   const diagnostic =
     error instanceof Error ? diagnostics.get(error) : undefined;
-  return diagnostic ? { ...diagnostic } : undefined;
+  return diagnostic
+    ? {
+        ...(error instanceof Error && challengeDetections.has(error)
+          ? { challengeDetection: challengeDetections.get(error)! }
+          : {}),
+        ...diagnostic,
+        ...(error instanceof Error && operations.has(error)
+          ? { operation: operations.get(error)! }
+          : {}),
+        ...(diagnostic.precedingChallenge
+          ? { precedingChallenge: { ...diagnostic.precedingChallenge } }
+          : {}),
+      }
+    : undefined;
 }

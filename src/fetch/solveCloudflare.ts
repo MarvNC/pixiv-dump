@@ -1,7 +1,12 @@
 import { PIXIV_BASE_URL } from '../constants';
 import { FetchBudget, REQUEST_TIMEOUT_MS } from './budget';
 import { challengeEvidence, type ChallengeResponse } from './challenge';
-import { recordFetchDiagnostic } from './diagnostics';
+import {
+  recordFetchDiagnostic,
+  recordPrecedingChallenge,
+  recordChallengeWait,
+  withFetchOperation,
+} from './diagnostics';
 import {
   CloudflareError,
   FetchSetupError,
@@ -172,8 +177,11 @@ async function waitForChallengeClear(
       (error instanceof FetchTimeoutError && !error.budgetExhausted) ||
       (error instanceof Error && error.name === 'TimeoutError')
     ) {
-      throw browserChallengeError();
+      const challenge = browserChallengeError();
+      recordChallengeWait(challenge);
+      throw challenge;
     }
+    recordChallengeWait(error);
     throw error;
   }
 }
@@ -255,15 +263,23 @@ async function ensureClearedPage(
   budget: FetchBudget,
 ): Promise<void> {
   if (!p.url().startsWith(PIXIV_BASE_URL)) {
-    await budget.run(
-      (timeout) =>
-        p.goto(PIXIV_BASE_URL, { waitUntil: 'domcontentloaded', timeout }),
-      REQUEST_TIMEOUT_MS,
+    await withFetchOperation('homepage-navigation', () =>
+      budget.run(
+        (timeout) =>
+          p.goto(PIXIV_BASE_URL, { waitUntil: 'domcontentloaded', timeout }),
+        REQUEST_TIMEOUT_MS,
+      ),
     );
   }
-  await waitForChallengeClear(p, budget);
-  await waitForPixivSession(budget);
-  await waitForReadyPage(p, budget);
+  await withFetchOperation('challenge-wait', () =>
+    waitForChallengeClear(p, budget),
+  );
+  await withFetchOperation('session-cookie-wait', () =>
+    waitForPixivSession(budget),
+  );
+  await withFetchOperation('document-readiness', () =>
+    waitForReadyPage(p, budget),
+  );
 }
 
 async function pageFetch(
@@ -307,7 +323,7 @@ async function pageFetch(
 export async function solveCloudflare(
   budget = new FetchBudget(),
 ): Promise<boolean> {
-  const p = await getPage(budget);
+  const p = await withFetchOperation('browser-session', () => getPage(budget));
   return retryAfterNavigation(p, budget, async () => {
     await ensureClearedPage(p, budget);
     const title = await budget.run(() => p.title());
@@ -344,35 +360,67 @@ async function navigateForResponse(
   };
   p.on('response', observe);
   try {
-    const initial = await budget.run(
-      (timeout) => p.goto(url, { waitUntil: 'domcontentloaded', timeout }),
-      REQUEST_TIMEOUT_MS,
+    const initial = await withFetchOperation('target-navigation', () =>
+      budget.run(
+        (timeout) => p.goto(url, { waitUntil: 'domcontentloaded', timeout }),
+        REQUEST_TIMEOUT_MS,
+      ),
     );
     // Normally the event has already fired; retain it for response reloads.
     if (!latest && initial) observe(initial);
-    await waitForChallengeClear(p, budget);
-    await waitForReadyPage(p, budget);
+    await withFetchOperation('challenge-wait', () =>
+      waitForChallengeClear(p, budget),
+    );
+    await withFetchOperation('document-readiness', () =>
+      waitForReadyPage(p, budget),
+    );
     if (!latest || p.url() !== url) return undefined;
     const response = latest;
-    const result = await budget.run(
-      async () => {
-        const headers = await response.allHeaders();
-        return {
-          status: response.status(),
-          text: await response.text(),
-          contentType: headers['content-type'] || '',
-          cfMitigated: headers['cf-mitigated'] || '',
-        };
-      },
-      REQUEST_TIMEOUT_MS,
-      () => {
-        if (page === p) page = null;
-        void p.close().catch(() => undefined);
-      },
+    const result = await withFetchOperation('navigation-response-body', () =>
+      budget.run(
+        async () => {
+          const headers = await response.allHeaders();
+          return {
+            status: response.status(),
+            text: await response.text(),
+            contentType: headers['content-type'] || '',
+            cfMitigated: headers['cf-mitigated'] || '',
+          };
+        },
+        REQUEST_TIMEOUT_MS,
+        () => {
+          if (page === p) page = null;
+          void p.close().catch(() => undefined);
+        },
+      ),
     );
     // Do not return an old body if a newer document arrived while reading it.
     if (latest !== response || p.url() !== url) return undefined;
     return result;
+  } catch (error) {
+    // Headers are already available on the observed response. Do not initiate
+    // more browser I/O after the deadline just to gather diagnostics.
+    try {
+      if (latest) {
+        const headers = latest.headers();
+        const response = {
+          status: latest.status(),
+          contentType: headers['content-type'] || '',
+          cfMitigated: headers['cf-mitigated'] || '',
+          text: '',
+        };
+        recordFetchDiagnostic(
+          error,
+          url,
+          'browser',
+          response,
+          challengeEvidence(response) ?? undefined,
+        );
+      }
+    } catch {
+      // Diagnostic inspection must never replace the original failure.
+    }
+    throw error;
   } finally {
     p.off('response', observe);
   }
@@ -382,18 +430,19 @@ export async function fetchWithBrowser(
   url: string,
   budget = new FetchBudget(),
 ): Promise<ChallengeResponse> {
-  const p = await getPage(budget);
+  const p = await withFetchOperation('browser-session', () => getPage(budget));
   return retryAfterNavigation(p, budget, async () => {
     await ensureClearedPage(p, budget);
-    let result = await pageFetch(p, url, budget);
+    let result = await withFetchOperation('browser-request', () =>
+      pageFetch(p, url, budget),
+    );
     const evidence = challengeEvidence(result);
     if (evidence) {
       try {
         const navigation = await navigateForResponse(p, url, budget);
         if (navigation) result = navigation;
       } catch (error) {
-        if (error instanceof CloudflareError)
-          recordFetchDiagnostic(error, url, 'browser', result, evidence);
+        recordPrecedingChallenge(error, url, result, evidence);
         throw error;
       }
     }

@@ -16,7 +16,11 @@ import {
 } from './errors';
 import { FetchBudget, REQUEST_TIMEOUT_MS } from './budget';
 import { challengeEvidence, type ChallengeResponse } from './challenge';
-import { fetchDiagnostic, recordFetchDiagnostic } from './diagnostics';
+import {
+  fetchDiagnostic,
+  recordFetchDiagnostic,
+  recordPrecedingChallenge,
+} from './diagnostics';
 
 export { CloudflareError, HttpError } from './errors';
 
@@ -228,6 +232,11 @@ async function fetchURLInner(
         httpResponse.cfMitigated,
       );
     } catch (error) {
+      if (transport === 'browser' && httpResponse) {
+        const preceding = challengeEvidence(httpResponse);
+        if (preceding)
+          recordPrecedingChallenge(error, url, httpResponse, preceding);
+      }
       recordFetchDiagnostic(
         error,
         url,
